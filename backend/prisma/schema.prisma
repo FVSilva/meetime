@@ -1,0 +1,104 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  // Local: sqlite / Produção Railway: troque para "postgresql"
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Lead {
+  id              String    @id @default(cuid())
+  externalId      String    @unique // ID do lead no Meetime
+  name            String
+  email           String?
+  phone           String?
+  company         String?
+  status          String    @default("new") // new | contacted | qualified | lost | won
+  source          String?
+  assignedTo      String?   // nome do SDR responsável
+  ownerEmail      String?   // email do owner (usado para filtro @v4)
+  enteredAt       DateTime  @default(now())
+  firstContactAt  DateTime?
+  responseTimeSec Int?      // tempo em segundos até o primeiro contato
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  activities      Activity[]
+  calls           Call[]
+}
+
+model Activity {
+  id          String    @id @default(cuid())
+  externalId  String    @unique
+  leadId      String
+  type        String    // call | email | whatsapp | meeting | task
+  title       String
+  description String?
+  scheduledAt DateTime?
+  completedAt DateTime?
+  status      String    @default("pending") // pending | done | cancelled
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  lead        Lead      @relation(fields: [leadId], references: [id])
+}
+
+model Call {
+  id              String    @id @default(cuid())
+  externalId      String    @unique
+  leadId          String
+  duration        Int?      // segundos
+  recordingUrl    String?
+  transcription   String?
+  summary         String?
+  sentiment       String?   // positive | neutral | negative
+  score           Int?      // 0-100
+  feedback        String?   // feedback IA para o SDR
+  calledAt        DateTime
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  lead            Lead      @relation(fields: [leadId], references: [id])
+}
+
+model User {
+  id        String   @id @default(cuid())
+  name      String
+  email     String   @unique
+  phone     String   // DDI+DDD+numero ex: 5511999999999
+  role      String   @default("sdr") // sdr | admin
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String?  // opcional: liga à tabela User
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  userAgent String?
+  createdAt DateTime @default(now())
+}
+
+model KanbanColumn {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique  // usado como Lead.status
+  colorKey  String   @default("gray")
+  position  Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model WebhookEvent {
+  id          String    @id @default(cuid())
+  eventType   String
+  payload     String    // JSON raw
+  processed   Boolean   @default(false)
+  error       String?
+  receivedAt  DateTime  @default(now())
+}

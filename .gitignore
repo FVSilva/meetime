@@ -1,0 +1,14 @@
+## Backend
+backend/node_modules/
+backend/.env
+backend/prisma/meetime.db
+backend/prisma/meetime.db-journal
+backend/prisma/migrations/
+
+## Frontend
+frontend/node_modules/
+frontend/dist/
+
+## Sistema
+.DS_Store
+*.log
