@@ -12,7 +12,6 @@
     "db:push": "prisma db push --schema=prisma/schema.dev.prisma"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.39.0",
     "@prisma/client": "^5.22.0",
     "axios": "^1.7.9",
     "cors": "^2.8.5",
