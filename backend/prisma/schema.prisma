@@ -22,6 +22,7 @@ model Lead {
   firstContactAt      DateTime?
   responseTimeSec     Int?
   publicUrl           String?   // URL pública do lead no Meetime
+  cadence             String?   // cadência no Meetime (ex: "Cold Outbound 30d")
   lastInactiveAlertAt DateTime? // última vez que enviamos alerta de inatividade
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt

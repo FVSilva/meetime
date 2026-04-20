@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   DndContext, DragOverlay, PointerSensor, useSensor, useSensors, closestCorners,
 } from '@dnd-kit/core';
@@ -6,10 +6,10 @@ import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-
 import { CSS } from '@dnd-kit/utilities';
 import {
   Plus, Pencil, Trash2, Check, X, RefreshCw,
-  Clock, Phone, Building2, GripVertical,
+  Clock, Phone, Building2, GripVertical, Tag, User, LayoutGrid, List,
 } from 'lucide-react';
 
-// ── Paleta de cores ────────────────────────────────────────────────────────
+// ── Paleta de cores das colunas ────────────────────────────────────────────
 
 const COLORS = {
   gray:   { border: 'border-gray-700',     dot: 'bg-gray-500',    count: 'bg-gray-800 text-gray-400',          swatch: 'bg-gray-500'    },
@@ -23,6 +23,9 @@ const COLORS = {
 };
 
 function colorOf(key) { return COLORS[key] || COLORS.gray; }
+
+// Paleta para colunas de cadência (gerada ciclicamente)
+const CADENCE_PALETTE = ['blue', 'purple', 'orange', 'yellow', 'green', 'red', 'gray'];
 
 // ── Color picker ───────────────────────────────────────────────────────────
 
@@ -41,9 +44,27 @@ function ColorPicker({ value, onChange }) {
   );
 }
 
+// ── Helpers de tempo ───────────────────────────────────────────────────────
+
+function elapsedLabel(dateStr) {
+  if (!dateStr) return null;
+  const mins = Math.round((Date.now() - new Date(dateStr)) / 60000);
+  if (mins < 60)  return `${mins}min`;
+  if (mins < 1440) return `${Math.round(mins / 60)}h`;
+  return `${Math.round(mins / 1440)}d`;
+}
+
+function elapsedColor(dateStr) {
+  if (!dateStr) return 'text-gray-600';
+  const mins = (Date.now() - new Date(dateStr)) / 60000;
+  if (mins < 30)  return 'text-green-500';
+  if (mins < 120) return 'text-yellow-500';
+  return 'text-red-400';
+}
+
 // ── Card de lead ───────────────────────────────────────────────────────────
 
-function LeadCard({ lead, isDragging }) {
+function LeadCard({ lead, isDragging, viewMode }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging: isSelf } =
     useSortable({ id: lead.id });
 
@@ -53,6 +74,20 @@ function LeadCard({ lead, isDragging }) {
   const rtColor = !rt ? '' : rt <= 300 ? 'text-green-500' : rt <= 1800 ? 'text-yellow-500' : 'text-red-500';
   const rtLabel = !rt ? null : rt < 3600 ? `${Math.round(rt/60)}min` : `${(rt/3600).toFixed(1)}h`;
 
+  const elapsed    = elapsedLabel(lead.updatedAt);
+  const elColor    = elapsedColor(lead.updatedAt);
+  const firstName  = lead.assignedTo?.split(' ')[0];
+
+  // Em modo cadência, mostramos o status do lead como badge
+  const STATUS_BADGE = {
+    new:       { label: 'Novo',        cls: 'bg-gray-800 text-gray-400' },
+    contacted: { label: 'Contatado',   cls: 'bg-red-900/40 text-red-400' },
+    qualified: { label: 'Qualificado', cls: 'bg-yellow-900/30 text-yellow-400' },
+    won:       { label: 'Ganho',       cls: 'bg-green-900/30 text-green-400' },
+    lost:      { label: 'Perdido',     cls: 'bg-gray-900 text-gray-600' },
+  };
+  const statusBadge = STATUS_BADGE[lead.status];
+
   return (
     <div
       ref={setNodeRef}
@@ -61,6 +96,7 @@ function LeadCard({ lead, isDragging }) {
         hover:border-red-800/40 transition-all
         ${isDragging ? 'shadow-2xl shadow-black border-red-700/50 rotate-1 scale-105' : ''}`}
     >
+      {/* Nome + drag handle */}
       <div className="flex items-start gap-2">
         <div className="flex-1 min-w-0">
           <p className="font-medium text-gray-100 text-sm truncate">{lead.name}</p>
@@ -76,32 +112,56 @@ function LeadCard({ lead, isDragging }) {
           <GripVertical size={13} />
         </div>
       </div>
-      {(rtLabel || lead._count?.calls > 0 || lead.assignedTo) && (
-        <div className="flex items-center gap-3 mt-2 pt-2 border-t border-gray-900">
-          {rtLabel && (
-            <span className={`flex items-center gap-1 text-xs ${rtColor}`}>
-              <Clock size={10} />{rtLabel}
+
+      {/* Tags de cadência + status (quando em modo cadência) */}
+      {(lead.cadence || (viewMode === 'cadence' && statusBadge)) && (
+        <div className="flex flex-wrap gap-1 mt-2">
+          {lead.cadence && (
+            <span className="inline-flex items-center gap-1 text-[10px] bg-blue-900/30 text-blue-400
+              border border-blue-800/30 px-1.5 py-0.5 rounded-full font-medium max-w-full truncate">
+              <Tag size={8} className="shrink-0" />
+              <span className="truncate">{lead.cadence}</span>
             </span>
           )}
-          {lead._count?.calls > 0 && (
-            <span className="flex items-center gap-1 text-xs text-gray-600">
-              <Phone size={10} />{lead._count.calls}
-            </span>
-          )}
-          {lead.assignedTo && (
-            <span className="text-xs text-gray-700 truncate ml-auto">
-              {lead.assignedTo.split(' ')[0]}
+          {viewMode === 'cadence' && statusBadge && (
+            <span className={`inline-flex text-[10px] px-1.5 py-0.5 rounded-full font-medium ${statusBadge.cls}`}>
+              {statusBadge.label}
             </span>
           )}
         </div>
       )}
+
+      {/* Rodapé: tempo de resposta · calls · responsável · tempo parado */}
+      <div className="flex items-center gap-2 mt-2 pt-2 border-t border-gray-900 flex-wrap">
+        {rtLabel && (
+          <span className={`flex items-center gap-1 text-xs ${rtColor}`} title="Tempo de 1º resposta">
+            <Clock size={10} />{rtLabel}
+          </span>
+        )}
+        {lead._count?.calls > 0 && (
+          <span className="flex items-center gap-1 text-xs text-gray-600" title="Ligações">
+            <Phone size={10} />{lead._count.calls}
+          </span>
+        )}
+        {firstName && (
+          <span className="flex items-center gap-1 text-xs text-gray-600 ml-auto" title={lead.assignedTo}>
+            <User size={10} />{firstName}
+          </span>
+        )}
+        {elapsed && (
+          <span className={`flex items-center gap-1 text-xs ${elColor} ${!firstName ? 'ml-auto' : ''}`}
+            title="Sem atividade há">
+            ⏱ {elapsed}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
 
-// ── Header de coluna (editável) ────────────────────────────────────────────
+// ── Header de coluna (editável — apenas no modo status) ───────────────────
 
-function ColumnHeader({ col, leadCount, onSave, onDelete }) {
+function ColumnHeader({ col, leadCount, onSave, onDelete, readOnly }) {
   const [editing, setEditing]     = useState(false);
   const [name, setName]           = useState(col.name);
   const [colorKey, setColorKey]   = useState(col.colorKey);
@@ -160,33 +220,35 @@ function ColumnHeader({ col, leadCount, onSave, onDelete }) {
           {leadCount}
         </span>
       </div>
-      <div className="flex items-center gap-0.5 opacity-0 group-hover/header:opacity-100 transition-opacity">
-        <button onClick={startEdit}
-          className="p-1 text-gray-600 hover:text-gray-300 rounded transition-colors" title="Editar">
-          <Pencil size={12} />
-        </button>
-        <button
-          onClick={confirmDelete}
-          className={`p-1 rounded transition-colors ${deleting ? 'text-red-400 bg-red-900/30' : 'text-gray-600 hover:text-red-400'}`}
-          title={deleting ? 'Clique novamente para confirmar' : 'Excluir coluna'}
-        >
-          <Trash2 size={12} />
-        </button>
-      </div>
+      {!readOnly && (
+        <div className="flex items-center gap-0.5 opacity-0 group-hover/header:opacity-100 transition-opacity">
+          <button onClick={startEdit}
+            className="p-1 text-gray-600 hover:text-gray-300 rounded transition-colors" title="Editar">
+            <Pencil size={12} />
+          </button>
+          <button
+            onClick={confirmDelete}
+            className={`p-1 rounded transition-colors ${deleting ? 'text-red-400 bg-red-900/30' : 'text-gray-600 hover:text-red-400'}`}
+            title={deleting ? 'Clique novamente para confirmar' : 'Excluir coluna'}
+          >
+            <Trash2 size={12} />
+          </button>
+        </div>
+      )}
     </div>
   );
 }
 
 // ── Coluna ─────────────────────────────────────────────────────────────────
 
-function Column({ col, leads, onSave, onDelete }) {
+function Column({ col, leads, onSave, onDelete, viewMode, readOnly }) {
   const c = colorOf(col.colorKey);
   return (
     <div className={`flex flex-col w-64 shrink-0 bg-black rounded-xl border ${c.border}`}>
-      <ColumnHeader col={col} leadCount={leads.length} onSave={onSave} onDelete={onDelete} />
+      <ColumnHeader col={col} leadCount={leads.length} onSave={onSave} onDelete={onDelete} readOnly={readOnly} />
       <div className="flex-1 p-2 space-y-2 min-h-28 overflow-y-auto max-h-[calc(100vh-200px)]">
         <SortableContext items={leads.map(l => l.id)} strategy={verticalListSortingStrategy}>
-          {leads.map(lead => <LeadCard key={lead.id} lead={lead} />)}
+          {leads.map(lead => <LeadCard key={lead.id} lead={lead} viewMode={viewMode} />)}
         </SortableContext>
         {leads.length === 0 && (
           <div className="h-16 flex items-center justify-center rounded-lg border border-dashed border-gray-900">
@@ -262,19 +324,20 @@ function NewColumnCard({ onCreate }) {
 // ── Kanban principal ───────────────────────────────────────────────────────
 
 const DEMO_LEADS = [
-  { id:'d1', name:'Ana Souza',    company:'TechCorp',  status:'new',       responseTimeSec:null, assignedTo:'João',  _count:{calls:0} },
-  { id:'d2', name:'Bruno Lima',   company:'Startup X', status:'contacted', responseTimeSec:240,  assignedTo:'Maria', _count:{calls:1} },
-  { id:'d3', name:'Carla Mendes', company:'Beta Ind.', status:'qualified', responseTimeSec:900,  assignedTo:'João',  _count:{calls:3} },
-  { id:'d4', name:'Diego Ramos',  company:'Alfa Com.', status:'won',       responseTimeSec:600,  assignedTo:'Maria', _count:{calls:4} },
-  { id:'d5', name:'Eva Costa',    company:'Nova Ltda', status:'new',       responseTimeSec:null, assignedTo:'João',  _count:{calls:0} },
+  { id:'d1', name:'Ana Souza',    company:'TechCorp',  status:'new',       cadence:'Cold Outbound 30d', responseTimeSec:null, assignedTo:'João Silva',   updatedAt: new Date(Date.now()-20*60000).toISOString(), _count:{calls:0} },
+  { id:'d2', name:'Bruno Lima',   company:'Startup X', status:'contacted', cadence:'Inbound Rápido',    responseTimeSec:240,  assignedTo:'Maria Santos', updatedAt: new Date(Date.now()-45*60000).toISOString(), _count:{calls:1} },
+  { id:'d3', name:'Carla Mendes', company:'Beta Ind.', status:'qualified', cadence:'Cold Outbound 30d', responseTimeSec:900,  assignedTo:'João Silva',   updatedAt: new Date(Date.now()-10*60000).toISOString(), _count:{calls:3} },
+  { id:'d4', name:'Diego Ramos',  company:'Alfa Com.', status:'won',       cadence:'Enterprise',        responseTimeSec:600,  assignedTo:'Maria Santos', updatedAt: new Date(Date.now()-5*60000).toISOString(),  _count:{calls:4} },
+  { id:'d5', name:'Eva Costa',    company:'Nova Ltda', status:'new',       cadence:'Inbound Rápido',    responseTimeSec:null, assignedTo:'João Silva',   updatedAt: new Date(Date.now()-2*60000).toISOString(),  _count:{calls:0} },
 ];
 
 export default function Kanban() {
-  const [columns, setColumns]   = useState([]);
-  const [leads, setLeads]       = useState([]);
-  const [isDemo, setIsDemo]     = useState(false);
-  const [activeId, setActiveId] = useState(null);
+  const [columns, setColumns]     = useState([]);
+  const [leads, setLeads]         = useState([]);
+  const [isDemo, setIsDemo]       = useState(false);
+  const [activeId, setActiveId]   = useState(null);
   const [lastUpdate, setLastUpdate] = useState(new Date());
+  const [viewMode, setViewMode]   = useState('status'); // 'status' | 'cadence'
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
@@ -284,7 +347,7 @@ export default function Kanban() {
     try {
       const [colRes, leadRes] = await Promise.all([
         fetch('/api/kanban/columns'),
-        fetch('/api/leads?limit=200'),
+        fetch('/api/leads?limit=500'),
       ]);
       if (!colRes.ok || !leadRes.ok) throw new Error();
       const [cols, leadData] = await Promise.all([colRes.json(), leadRes.json()]);
@@ -304,29 +367,49 @@ export default function Kanban() {
     return () => clearInterval(t);
   }, [fetchAll]);
 
-  // Organiza leads por slug da coluna
-  const byCol = columns.reduce((acc, col) => {
-    acc[col.slug] = leads.filter(l => l.status === col.slug);
-    return acc;
-  }, {});
+  // ── Visão por STATUS (original) ──────────────────────────────────────────
+  const byStatus = useMemo(() => {
+    return columns.reduce((acc, col) => {
+      acc[col.slug] = leads.filter(l => l.status === col.slug);
+      return acc;
+    }, {});
+  }, [columns, leads]);
+
+  // ── Visão por CADÊNCIA (colunas dinâmicas) ───────────────────────────────
+  const cadenceColumns = useMemo(() => {
+    const map = new Map();
+    for (const lead of leads) {
+      const key = lead.cadence || '(sem cadência)';
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(lead);
+    }
+    // Ordena por nº de leads (desc)
+    const sorted = [...map.entries()].sort((a, b) => b[1].length - a[1].length);
+    return sorted.map(([name, colLeads], i) => ({
+      id:       name,
+      slug:     name,
+      name,
+      colorKey: CADENCE_PALETTE[i % CADENCE_PALETTE.length],
+      leads:    colLeads,
+    }));
+  }, [leads]);
 
   const activeLead = activeId ? leads.find(l => l.id === activeId) : null;
 
   function colOfLead(leadId) {
-    return columns.find(col => byCol[col.slug]?.some(l => l.id === leadId))?.slug;
+    return columns.find(col => byStatus[col.slug]?.some(l => l.id === leadId))?.slug;
   }
 
   function handleDragStart({ active }) { setActiveId(active.id); }
 
   async function handleDragEnd({ active, over }) {
     setActiveId(null);
-    if (!over) return;
+    if (!over || viewMode === 'cadence') return; // drag desativado no modo cadência
     const fromSlug = colOfLead(active.id);
     const toSlug   = columns.find(c => c.id === over.id || c.slug === over.id)?.slug
                   || colOfLead(over.id);
     if (!toSlug || fromSlug === toSlug) return;
 
-    // Atualiza otimista
     setLeads(prev => prev.map(l => l.id === active.id ? { ...l, status: toSlug } : l));
 
     try {
@@ -361,6 +444,8 @@ export default function Kanban() {
     fetchAll();
   }
 
+  const isCadence = viewMode === 'cadence';
+
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
@@ -373,6 +458,25 @@ export default function Kanban() {
         </div>
         <div className="flex items-center gap-3">
           {isDemo && <span className="badge bg-red-900/30 text-red-400 border border-red-800/40">Demo</span>}
+
+          {/* Toggle visão */}
+          <div className="flex items-center bg-gray-900 border border-gray-800 rounded-lg p-0.5 gap-0.5">
+            <button
+              onClick={() => setViewMode('status')}
+              className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md transition-colors
+                ${!isCadence ? 'bg-gray-800 text-white' : 'text-gray-500 hover:text-gray-300'}`}
+            >
+              <List size={12} /> Etapas
+            </button>
+            <button
+              onClick={() => setViewMode('cadence')}
+              className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md transition-colors
+                ${isCadence ? 'bg-gray-800 text-white' : 'text-gray-500 hover:text-gray-300'}`}
+            >
+              <LayoutGrid size={12} /> Cadências
+            </button>
+          </div>
+
           <button onClick={fetchAll} className="btn-ghost">
             <RefreshCw size={14} /> Atualizar
           </button>
@@ -388,23 +492,49 @@ export default function Kanban() {
             onDragStart={handleDragStart}
             onDragEnd={handleDragEnd}
           >
-            {columns.map(col => (
-              <Column
-                key={col.id}
-                col={col}
-                leads={byCol[col.slug] || []}
-                onSave={handleSaveColumn}
-                onDelete={handleDeleteColumn}
-              />
-            ))}
+            {isCadence
+              /* ─── MODO CADÊNCIA: colunas dinâmicas, read-only ─── */
+              ? cadenceColumns.map(col => (
+                  <Column
+                    key={col.id}
+                    col={col}
+                    leads={col.leads}
+                    onSave={() => {}}
+                    onDelete={() => {}}
+                    viewMode="cadence"
+                    readOnly
+                  />
+                ))
+
+              /* ─── MODO STATUS: colunas editáveis ─── */
+              : columns.map(col => (
+                  <Column
+                    key={col.id}
+                    col={col}
+                    leads={byStatus[col.slug] || []}
+                    onSave={handleSaveColumn}
+                    onDelete={handleDeleteColumn}
+                    viewMode="status"
+                  />
+                ))
+            }
 
             <DragOverlay>
-              {activeLead ? <LeadCard lead={activeLead} isDragging /> : null}
+              {activeLead ? <LeadCard lead={activeLead} isDragging viewMode={viewMode} /> : null}
             </DragOverlay>
           </DndContext>
 
-          {/* Botão de nova coluna (fora do DndContext para não virar droppable) */}
-          <NewColumnCard onCreate={handleCreateColumn} />
+          {/* Botão nova coluna apenas no modo status */}
+          {!isCadence && <NewColumnCard onCreate={handleCreateColumn} />}
+
+          {/* Estado vazio no modo cadência */}
+          {isCadence && cadenceColumns.length === 0 && (
+            <div className="flex flex-col items-center justify-center w-80 text-center text-gray-700 gap-2">
+              <Tag size={32} className="text-gray-800" />
+              <p className="text-sm">Nenhuma cadência encontrada</p>
+              <p className="text-xs">Os leads precisam ter cadência definida no Meetime</p>
+            </div>
+          )}
         </div>
       </div>
     </div>

@@ -121,6 +121,7 @@ async function processApiLead(prisma, data) {
       phone,
       company,
       source,
+      cadence,
       assignedTo,
       ownerEmail,
       enteredAt,
