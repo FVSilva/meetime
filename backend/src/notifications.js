@@ -120,9 +120,7 @@ async function notifyNewLead(lead, prisma, cadence = null) {
 
   console.log(`[Notif] Novo lead "${lead.name}" → ${recipients.length} destinatário(s)`);
 
-  const gchatMsg = buildLeadMessage(lead, '', cadence);
-  const tasks = [sendGoogleChat(gchatMsg)];
-
+  const tasks = [];
   for (const r of recipients) {
     const msg = buildLeadMessage(lead, r.name, cadence);
     tasks.push(sendWhatsApp(r.phone, msg));
@@ -136,8 +134,7 @@ async function notifyNewActivity(activity, lead, prisma) {
 
   console.log(`[Notif] Nova atividade "${activity.title}" → ${recipients.length} destinatário(s)`);
 
-  const tasks = [sendGoogleChat(buildActivityMessage(activity, lead))];
-
+  const tasks = [];
   for (const r of recipients) {
     tasks.push(sendWhatsApp(r.phone, buildActivityMessage(activity, lead, r.name)));
   }

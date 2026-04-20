@@ -14,7 +14,7 @@
  */
 
 const axios = require('axios');
-const { notifyNewLead, sendWhatsApp, sendGoogleChat } = require('./notifications');
+const { notifyNewLead, sendWhatsApp } = require('./notifications');
 const { sendPushToLeadOwner, sendPushToAdmins } = require('./push');
 
 const MEETIME_API_BASE = 'https://api.meetime.com.br/v2';
@@ -200,7 +200,7 @@ async function checkInactiveLeads(prisma) {
 async function notifyLeadInactive(lead, minutes, admins, prisma) {
   const msg = buildInactiveMessage(lead, minutes);
 
-  const tasks = [sendGoogleChat(msg)];
+  const tasks = [];
 
   if (admins.length > 0) {
     for (const admin of admins) {
