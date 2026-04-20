@@ -134,7 +134,8 @@ async function sendPushToLeadOwner(prisma, payload, ownerEmail) {
 
   // Inclui o owner se tiver email @v4company.com
   const targets = new Set(adminEmails);
-  if (ownerEmail && ownerEmail.toLowerCase().includes('@v4company.com')) {
+  const ownerDomain = process.env.OWNER_DOMAIN || '@v4company.com';
+  if (ownerEmail && ownerEmail.toLowerCase().includes(ownerDomain)) {
     targets.add(ownerEmail.toLowerCase());
   }
 

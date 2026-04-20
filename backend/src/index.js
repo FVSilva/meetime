@@ -30,6 +30,8 @@ app.use('/api', pushRouter);
 
 app.get('/health', (req, res) => res.json({ ok: true, ts: new Date().toISOString() }));
 
+app.use((req, res) => res.status(404).json({ error: 'Rota não encontrada' }));
+
 app.use((err, req, res, next) => {
   console.error('[ERROR]', err.message);
   res.status(500).json({ error: err.message });

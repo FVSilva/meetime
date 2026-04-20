@@ -123,7 +123,7 @@ async function checkInactiveLeads(prisma) {
     // E que não receberam alerta nos últimos 30 min
     const staleLeads = await prisma.lead.findMany({
       where: {
-        status: { notIn: ['won', 'lost', 'ganho', 'perdido'] },
+        status: { notIn: ['won', 'lost'] },
         updatedAt: { lt: threshold },
         OR: [
           { lastInactiveAlertAt: null },

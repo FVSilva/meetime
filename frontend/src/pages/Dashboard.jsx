@@ -27,23 +27,22 @@ function formatResponseTime(sec) {
   return `${(sec / 3600).toFixed(1)}h`;
 }
 
-const DEMO = {
-  kpis: { totalLeads: 48, contactedLeads: 31, contactRate: 65, avgResponseSec: 420, avgScore: 74 },
-  charts: {
-    leadsPerDay: [
-      { day: '2026-04-11', total: 5 }, { day: '2026-04-12', total: 8 },
-      { day: '2026-04-13', total: 4 }, { day: '2026-04-14', total: 11 },
-      { day: '2026-04-15', total: 7 }, { day: '2026-04-16', total: 9 },
-      { day: '2026-04-17', total: 4 },
-    ],
-    callsPerDay: [
-      { day: '2026-04-11', total: 3, avgScore: 70 }, { day: '2026-04-12', total: 6, avgScore: 75 },
-      { day: '2026-04-13', total: 2, avgScore: 68 }, { day: '2026-04-14', total: 8, avgScore: 80 },
-      { day: '2026-04-15', total: 5, avgScore: 72 }, { day: '2026-04-16', total: 7, avgScore: 78 },
-      { day: '2026-04-17', total: 3, avgScore: 74 },
-    ],
-  },
-};
+// Gera dados demo com datas sempre atuais (últimos 7 dias)
+function buildDemo() {
+  const days = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date();
+    d.setDate(d.getDate() - (6 - i));
+    return d.toISOString().split('T')[0];
+  });
+  return {
+    kpis: { totalLeads: 48, contactedLeads: 31, contactRate: 65, avgResponseSec: 420, avgScore: 74 },
+    charts: {
+      leadsPerDay: days.map((day, i) => ({ day, total: [5,8,4,11,7,9,4][i] })),
+      callsPerDay: days.map((day, i) => ({ day, total: [3,6,2,8,5,7,3][i], avgScore: [70,75,68,80,72,78,74][i] })),
+    },
+  };
+}
+const DEMO = buildDemo();
 
 const TT = {
   backgroundColor: '#0a0a0a',

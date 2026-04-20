@@ -45,8 +45,13 @@ router.patch('/users/:id', async (req, res) => {
   if (role  !== undefined) data.role   = role === 'admin' ? 'admin' : 'sdr';
   if (active!== undefined) data.active = Boolean(active);
 
-  const user = await db(req).user.update({ where: { id: req.params.id }, data });
-  res.json(user);
+  try {
+    const user = await db(req).user.update({ where: { id: req.params.id }, data });
+    res.json(user);
+  } catch (err) {
+    if (err.code === 'P2002') return res.status(409).json({ error: 'Este email já está cadastrado' });
+    throw err;
+  }
 });
 
 /** DELETE /api/users/:id */
