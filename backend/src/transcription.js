@@ -3,8 +3,15 @@ const FormData = require('form-data');
 const OpenAI = require('openai');
 const Anthropic = require('@anthropic-ai/sdk');
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+// Inicializa sob demanda para não quebrar o boot sem as chaves
+function getOpenAI() {
+  if (!process.env.OPENAI_API_KEY) throw new Error('OPENAI_API_KEY não configurada');
+  return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+}
+function getAnthropic() {
+  if (!process.env.ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY não configurada');
+  return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+}
 
 /**
  * Baixa o áudio de uma URL e retorna como Buffer
@@ -69,7 +76,7 @@ ${transcription}
 
 Responda APENAS com o JSON válido, sem markdown ou explicações extras.`;
 
-  const message = await anthropic.messages.create({
+  const message = await getAnthropic().messages.create({
     model: process.env.CLAUDE_MODEL || 'claude-3-5-sonnet-20241022',
     max_tokens: 1024,
     messages: [{ role: 'user', content: prompt }],
