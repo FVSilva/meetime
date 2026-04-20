@@ -120,10 +120,9 @@ async function notifyNewLead(lead, prisma, cadence = null) {
 
   console.log(`[Notif] Novo lead "${lead.name}" → ${recipients.length} destinatário(s)`);
 
-  const tasks = [];
+  const tasks = [sendGoogleChat(buildLeadMessage(lead, '', cadence))];
   for (const r of recipients) {
-    const msg = buildLeadMessage(lead, r.name, cadence);
-    tasks.push(sendWhatsApp(r.phone, msg));
+    tasks.push(sendWhatsApp(r.phone, buildLeadMessage(lead, r.name, cadence)));
   }
 
   await Promise.allSettled(tasks);
