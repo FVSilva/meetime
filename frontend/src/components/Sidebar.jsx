@@ -1,12 +1,13 @@
 import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard, Users, Phone, CheckSquare,
-  Link2, Settings2, MessageCircle, Kanban,
+  Link2, Settings2, MessageCircle, Kanban, BarChart2,
 } from 'lucide-react';
 import PushBell from './PushBell';
 
 const nav = [
   { to: '/dashboard',  label: 'Dashboard',  icon: LayoutDashboard },
+  { to: '/analise',    label: 'Análise',    icon: BarChart2       },
   { to: '/kanban',     label: 'Kanban',     icon: Kanban          },
   { to: '/leads',      label: 'Leads',      icon: Users           },
   { to: '/calls',      label: 'Ligações',   icon: Phone           },

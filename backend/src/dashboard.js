@@ -162,6 +162,80 @@ router.get('/calls/:id', async (req, res) => {
   res.json(call);
 });
 
+// ── GET /api/analytics ───────────────────────────────────────────────────────
+// ?from=YYYY-MM-DD&to=YYYY-MM-DD  (padrão: hoje)
+
+router.get('/analytics', async (req, res) => {
+  const prisma = db(req);
+
+  // Janela do período
+  const todayStr = new Date().toISOString().split('T')[0];
+  const fromStr  = req.query.from || todayStr;
+  const toStr    = req.query.to   || todayStr;
+
+  const from = new Date(`${fromStr}T00:00:00.000Z`);
+  const to   = new Date(`${toStr}T23:59:59.999Z`);
+
+  // Todos os leads do período (sem filtro de hora, para o calendário livre)
+  const leads = await prisma.lead.findMany({
+    where: {
+      enteredAt: { gte: from, lte: to },
+      NOT: { name: { in: ['Sem nome', 'Lead desconhecido', 'Lead'] } },
+      OR: [{ email: { not: null } }, { phone: { not: null } }],
+    },
+    select: {
+      id: true, name: true, company: true, status: true,
+      assignedTo: true, ownerEmail: true, enteredAt: true,
+    },
+  });
+
+  // Heurística PJ/PF
+  const isPJ = l => !!l.company;
+
+  // Stats globais
+  function calcStats(arr) {
+    const won    = arr.filter(l => l.status === 'won').length;
+    const lost   = arr.filter(l => l.status === 'lost').length;
+    const open   = arr.filter(l => l.status !== 'won' && l.status !== 'lost').length;
+    const lostPJ = arr.filter(l => l.status === 'lost' && isPJ(l)).length;
+    const lostPF = arr.filter(l => l.status === 'lost' && !isPJ(l)).length;
+    const total  = arr.length;
+    return { total, won, lost, lostPJ, lostPF, open,
+             conversionRate: total > 0 ? Math.round((won / total) * 100) : 0 };
+  }
+
+  // Funil por consultor: conta leads em cada estágio acumulativo
+  function buildFunnel(arr) {
+    const contacted = arr.filter(l => ['contacted','qualified','won','lost'].includes(l.status)).length;
+    const qualified = arr.filter(l => ['qualified','won'].includes(l.status)).length;
+    const won       = arr.filter(l => l.status === 'won').length;
+    return [
+      { stage: 'Recebidos',   count: arr.length,  pct: 100 },
+      { stage: 'Contatados',  count: contacted,   pct: arr.length > 0 ? Math.round(contacted / arr.length * 100) : 0 },
+      { stage: 'Qualificados',count: qualified,   pct: arr.length > 0 ? Math.round(qualified / arr.length * 100) : 0 },
+      { stage: 'Convertidos', count: won,         pct: arr.length > 0 ? Math.round(won       / arr.length * 100) : 0 },
+    ];
+  }
+
+  // Agrupa por consultor
+  const map = new Map();
+  for (const lead of leads) {
+    const key = lead.assignedTo || '(sem responsável)';
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(lead);
+  }
+
+  const consultants = [...map.entries()]
+    .map(([name, arr]) => ({ name, ...calcStats(arr), funnel: buildFunnel(arr) }))
+    .sort((a, b) => b.total - a.total);
+
+  res.json({
+    period: { from: fromStr, to: toStr },
+    summary: calcStats(leads),
+    consultants,
+  });
+});
+
 // ── PATCH /api/leads/:id/status ───────────────────────────────────────────────
 
 router.patch('/leads/:id/status', async (req, res) => {
