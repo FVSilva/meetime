@@ -14,7 +14,7 @@ function getOpenAI() {
 async function downloadAudio(url) {
   const headers = {};
   if (process.env.MEETIME_API_TOKEN) {
-    headers['Authorization'] = `Bearer ${process.env.MEETIME_API_TOKEN}`;
+    headers['authorization'] = process.env.MEETIME_API_TOKEN;
   }
   const response = await axios.get(url, { responseType: 'arraybuffer', headers });
   return Buffer.from(response.data);

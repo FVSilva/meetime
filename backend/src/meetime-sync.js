@@ -34,7 +34,7 @@ function meetimeApi() {
   return axios.create({
     baseURL: MEETIME_API_BASE,
     headers: {
-      Authorization: `Bearer ${token}`,
+      authorization: token, // Meetime usa token direto sem "Bearer"
       'Content-Type': 'application/json',
     },
     timeout: 15000,
