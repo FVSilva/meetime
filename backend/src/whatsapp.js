@@ -30,17 +30,28 @@ router.post('/whatsapp/connect', async (req, res) => {
   const instanceName = INSTANCE();
 
   try {
-    // Tenta criar — se já existir a Evolution retorna erro, tratamos abaixo
-    await client.post('/instance/create', {
-      instanceName,
-      qrcode: true,
-      integration: 'WHATSAPP-BAILEYS',
-    }).catch(err => {
-      // Instância já existe — ignora e segue
-      if (err.response?.status !== 409 && err.response?.data?.error !== 'instance already exists') {
-        throw err;
-      }
-    });
+    // Verifica se a instância já existe antes de tentar criar
+    const existingState = await client.get(`/instance/connectionState/${instanceName}`)
+      .then(r => r.data?.instance?.state || r.data?.state || null)
+      .catch(() => null);
+
+    if (!existingState) {
+      // Instância não existe — cria
+      await client.post('/instance/create', {
+        instanceName,
+        qrcode: true,
+        integration: 'WHATSAPP-BAILEYS',
+      }).catch(err => {
+        // Qualquer erro de "já existe" (409, 403, 400) — ignora e segue
+        const status = err.response?.status;
+        if (status !== 409 && status !== 403 && status !== 400) throw err;
+      });
+    }
+
+    // Se já está conectado, retorna o estado sem QR
+    if (existingState === 'open') {
+      return res.json({ instanceName, state: 'open', qrcode: null });
+    }
 
     // Pede o QR code
     const { data } = await client.get(`/instance/connect/${instanceName}`);
