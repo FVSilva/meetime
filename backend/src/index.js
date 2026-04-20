@@ -9,6 +9,7 @@ const usersRouter = require('./users');
 const whatsappRouter = require('./whatsapp');
 const { router: kanbanRouter, seedDefaultColumns } = require('./kanban');
 const { router: pushRouter } = require('./push');
+const { startSync } = require('./meetime-sync');
 
 const app = express();
 const prisma = new PrismaClient();
@@ -43,6 +44,9 @@ async function start() {
     console.log(`   Webhook URL: http://localhost:${PORT}/webhook/meetime`);
     console.log(`   Dashboard:   http://localhost:${PORT}/api/dashboard`);
   });
+
+  // Inicia polling de leads + monitor de inatividade
+  startSync(prisma);
 }
 
 start().catch(console.error);

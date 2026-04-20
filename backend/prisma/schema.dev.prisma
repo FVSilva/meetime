@@ -16,13 +16,14 @@ model Lead {
   company         String?
   status          String    @default("new") // new | contacted | qualified | lost | won
   source          String?
-  assignedTo      String?   // nome do SDR responsável
-  ownerEmail      String?   // email do owner (usado para filtro @v4)
-  enteredAt       DateTime  @default(now())
-  firstContactAt  DateTime?
-  responseTimeSec Int?      // tempo em segundos até o primeiro contato
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  assignedTo          String?
+  ownerEmail          String?
+  enteredAt           DateTime  @default(now())
+  firstContactAt      DateTime?
+  responseTimeSec     Int?
+  lastInactiveAlertAt DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 
   activities      Activity[]
   calls           Call[]

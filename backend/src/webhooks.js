@@ -13,13 +13,17 @@ function db(req) {
  * Endpoint principal de webhook da Meetime.
  * Configure no painel Meetime apontando para: POST /webhook/meetime
  *
- * Eventos suportados:
- *   lead.created      → notifica SDRs + salva lead
- *   lead.updated      → atualiza lead
- *   call.completed    → transcreve + analisa + salva
- *   activity.created  → notifica SDRs + salva atividade
- *   activity.updated  → atualiza atividade
- *   activity.completed→ marca como concluída
+ * Eventos suportados (conforme painel Meetime):
+ *   lead.won              → Lead Ganho      → marca status won + notifica
+ *   lead.lost             → Lead Perdido    → marca status lost + notifica
+ *   call.started          → Ligação iniciada
+ *   call.completed        → Ligação finalizada → transcreve + analisa
+ *   call.updated          → Ligação atualizada
+ *   activity.flow.done    → Atividade Flow Feita   → salva + notifica
+ *   activity.flow.ignored → Atividade Flow Ignorada → salva
+ *
+ * Obs: "lead chegando" NÃO é um evento de webhook disponível.
+ *      Novos leads são detectados via polling da API (meetime-sync.js).
  */
 router.post('/meetime', async (req, res) => {
   const prisma = db(req);
@@ -50,14 +54,39 @@ router.post('/meetime', async (req, res) => {
 
 async function handleEvent(prisma, event, data) {
   switch (event) {
+    // ── Leads ─────────────────────────────────────────────
+    case 'lead.won':
+      await handleLeadStatusChange(prisma, data, 'won', '🏆 Lead Ganho');
+      break;
+    case 'lead.lost':
+      await handleLeadStatusChange(prisma, data, 'lost', '❌ Lead Perdido');
+      break;
+
+    // ── Ligações ──────────────────────────────────────────
+    case 'call.started':
+      await handleCallStarted(prisma, data);
+      break;
+    case 'call.completed':
+      await handleCallCompleted(prisma, data);
+      break;
+    case 'call.updated':
+      await handleCallUpdatedEvent(prisma, data);
+      break;
+
+    // ── Atividades Flow ───────────────────────────────────
+    case 'activity.flow.done':
+      await handleFlowActivity(prisma, data, 'done');
+      break;
+    case 'activity.flow.ignored':
+      await handleFlowActivity(prisma, data, 'ignored');
+      break;
+
+    // ── Legados (mantidos por compatibilidade) ────────────
     case 'lead.created':
       await handleLeadCreated(prisma, data);
       break;
     case 'lead.updated':
       await handleLeadUpdated(prisma, data);
-      break;
-    case 'call.completed':
-      await handleCallCompleted(prisma, data);
       break;
     case 'activity.created':
       await handleActivityCreated(prisma, data);
@@ -66,6 +95,7 @@ async function handleEvent(prisma, event, data) {
     case 'activity.completed':
       await handleActivityUpdated(prisma, data, event);
       break;
+
     default:
       console.log(`[Webhook] Evento não mapeado: ${event}`);
   }
@@ -242,6 +272,160 @@ async function handleActivityCreated(prisma, data) {
     }),
   ]);
 }
+
+// ── Handlers novos ──────────────────────────────────────────────────────────
+
+async function handleLeadStatusChange(prisma, data, newStatus, label) {
+  const externalId = String(data.id || data.lead_id);
+  let lead = await prisma.lead.findUnique({ where: { externalId } });
+
+  if (!lead) {
+    // Cria rascunho caso não exista ainda
+    lead = await prisma.lead.create({
+      data: {
+        externalId,
+        name:      data.name || data.contact_name || 'Lead',
+        ownerEmail: data.assigned_to?.email || null,
+        assignedTo: data.assigned_to?.name  || null,
+        enteredAt:  new Date(),
+      },
+    });
+  }
+
+  await prisma.lead.update({
+    where: { id: lead.id },
+    data:  { status: newStatus, updatedAt: new Date() },
+  });
+
+  console.log(`[Webhook] ${label}: ${lead.name}`);
+
+  // Notifica via push
+  await sendPushToAll(prisma, {
+    title: label,
+    body:  `${lead.name}${lead.company ? ' · ' + lead.company : ''}`,
+    url:   '/kanban',
+    tag:   `status-${lead.id}`,
+  });
+}
+
+async function handleCallStarted(prisma, data) {
+  const leadExternalId = String(data.lead_id || data.contact_id || '');
+  let lead = leadExternalId
+    ? await prisma.lead.findUnique({ where: { externalId: leadExternalId } })
+    : null;
+
+  if (!lead) {
+    lead = await prisma.lead.create({
+      data: {
+        externalId: leadExternalId || `call-start-${data.id}`,
+        name:       data.contact_name || 'Lead desconhecido',
+        enteredAt:  new Date(),
+      },
+    });
+  }
+
+  await prisma.call.upsert({
+    where: { externalId: String(data.id) },
+    update: {},
+    create: {
+      externalId:  String(data.id),
+      leadId:      lead.id,
+      duration:    0,
+      recordingUrl: null,
+      calledAt:    data.started_at ? new Date(data.started_at) : new Date(),
+    },
+  });
+
+  // Marca o lead como "em contato" se for o primeiro
+  if (!lead.firstContactAt) {
+    await prisma.lead.update({
+      where: { id: lead.id },
+      data: {
+        firstContactAt:  new Date(),
+        status:          'contacted',
+        responseTimeSec: Math.round((new Date() - lead.enteredAt) / 1000),
+      },
+    });
+  }
+
+  console.log(`[Webhook] 📞 Ligação iniciada para: ${lead.name}`);
+}
+
+async function handleCallUpdatedEvent(prisma, data) {
+  const call = await prisma.call.findUnique({ where: { externalId: String(data.id) } });
+  if (!call) return;
+
+  await prisma.call.update({
+    where: { id: call.id },
+    data: {
+      duration:     data.duration     || call.duration,
+      recordingUrl: data.recording_url || call.recordingUrl,
+      updatedAt:    new Date(),
+    },
+  });
+
+  console.log(`[Webhook] Ligação atualizada: ${call.id}`);
+}
+
+async function handleFlowActivity(prisma, data, outcome) {
+  // outcome: 'done' | 'ignored'
+  const leadId = data.lead_id || data.contact_id;
+  let lead = leadId
+    ? await prisma.lead.findUnique({ where: { externalId: String(leadId) } })
+    : null;
+
+  if (!lead) {
+    lead = await prisma.lead.create({
+      data: {
+        externalId: String(leadId || `flow-${data.id}`),
+        name:       data.contact_name || 'Lead desconhecido',
+        enteredAt:  new Date(),
+      },
+    });
+  }
+
+  const activity = await prisma.activity.upsert({
+    where: { externalId: String(data.id) },
+    update: {
+      status:      outcome === 'done' ? 'done' : 'cancelled',
+      completedAt: new Date(),
+      updatedAt:   new Date(),
+    },
+    create: {
+      externalId:  String(data.id),
+      leadId:      lead.id,
+      type:        data.type || 'flow',
+      title:       data.title || data.subject || 'Atividade Flow',
+      description: data.description || null,
+      scheduledAt: data.scheduled_at ? new Date(data.scheduled_at) : null,
+      status:      outcome === 'done' ? 'done' : 'cancelled',
+      completedAt: new Date(),
+    },
+  });
+
+  // Atualiza o updatedAt do lead para reset do contador de inatividade
+  await prisma.lead.update({
+    where: { id: lead.id },
+    data:  { updatedAt: new Date() },
+  });
+
+  const icon = outcome === 'done' ? '✅' : '⏭️';
+  console.log(`[Webhook] ${icon} Flow ${outcome}: ${activity.title} — ${lead.name}`);
+
+  if (outcome === 'done') {
+    await Promise.allSettled([
+      notifyNewActivity(activity, lead, prisma),
+      sendPushToAll(prisma, {
+        title: '✅ Flow concluído',
+        body:  `${activity.title} · ${lead.name}`,
+        url:   '/activities',
+        tag:   `flow-${activity.id}`,
+      }),
+    ]);
+  }
+}
+
+// ── Handlers existentes ──────────────────────────────────────────────────────
 
 async function handleActivityUpdated(prisma, data, event) {
   const existing = await prisma.activity.findUnique({ where: { externalId: String(data.id) } });
