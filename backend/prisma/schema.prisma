@@ -76,7 +76,8 @@ model User {
 
 model PushSubscription {
   id        String   @id @default(cuid())
-  userId    String?  // opcional: liga à tabela User
+  userId    String?
+  userEmail String?  // email vinculado — filtra notificações por role
   endpoint  String   @unique
   p256dh    String
   auth      String

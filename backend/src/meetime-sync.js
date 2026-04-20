@@ -15,7 +15,7 @@
 
 const axios = require('axios');
 const { notifyNewLead, sendWhatsApp, sendGoogleChat } = require('./notifications');
-const { sendPushToAll } = require('./push');
+const { sendPushToLeadOwner, sendPushToAdmins } = require('./push');
 
 const MEETIME_API_BASE = 'https://api.meetime.com.br/v2';
 const POLL_INTERVAL_MS   = 2 * 60 * 1000;  // 2 minutos
@@ -103,12 +103,12 @@ async function processApiLead(prisma, data) {
   // Notifica
   await Promise.allSettled([
     notifyNewLead(lead, prisma),
-    sendPushToAll(prisma, {
+    sendPushToLeadOwner(prisma, {
       title: '🔔 Novo Lead!',
       body:  `${lead.name}${lead.company ? ' · ' + lead.company : ''}`,
       url:   '/leads',
       tag:   `lead-${lead.id}`,
-    }),
+    }, ownerEmail),
   ]);
 }
 
@@ -174,7 +174,7 @@ async function notifyLeadInactive(lead, minutes, admins, prisma) {
   }
 
   tasks.push(
-    sendPushToAll(prisma, {
+    sendPushToAdmins(prisma, {
       title: '⏰ Lead parado há ' + minutes + ' min',
       body:  `${lead.name}${lead.company ? ' · ' + lead.company : ''} — sem atividade`,
       url:   '/kanban',

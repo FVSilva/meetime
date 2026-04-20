@@ -32,7 +32,19 @@
       "Bash(curl -s http://localhost:3001/api/push/vapid-public-key)",
       "Bash(gh --version)",
       "Bash(winget install *)",
-      "Bash(choco install *)"
+      "Bash(choco install *)",
+      "Bash(git config *)",
+      "Bash(export PATH=\"$PATH:/c/Program Files/GitHub CLI\")",
+      "Bash(gh auth *)",
+      "Bash(gh repo *)",
+      "Bash(node -e \"const p = require\\('./node_modules/prisma/package.json'\\); console.log\\(p.version\\)\")",
+      "Bash(git push *)",
+      "mcp__Claude_in_Chrome__tabs_context_mcp",
+      "mcp__Claude_in_Chrome__switch_browser",
+      "mcp__Claude_in_Chrome__computer",
+      "mcp__Claude_in_Chrome__navigate",
+      "WebSearch",
+      "WebFetch(domain:meetime.readme.io)"
     ]
   }
 }

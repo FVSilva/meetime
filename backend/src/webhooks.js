@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { notifyNewLead, notifyNewActivity } = require('./notifications');
 const { processCallRecording } = require('./transcription');
-const { sendPushToAll } = require('./push');
+const { sendPushToAll, sendPushToAdmins, sendPushToLeadOwner } = require('./push');
 
 // Helper para pegar prisma do app
 function db(req) {
@@ -126,12 +126,12 @@ async function handleLeadCreated(prisma, data) {
   console.log(`[Lead] Criado: ${lead.name} | owner: ${ownerEmail || 'sem email'}`);
   await Promise.all([
     notifyNewLead(lead, prisma),
-    sendPushToAll(prisma, {
+    sendPushToLeadOwner(prisma, {
       title: '🔔 Novo Lead!',
       body:  `${lead.name}${lead.company ? ' · ' + lead.company : ''}`,
       url:   '/leads',
       tag:   `lead-${lead.id}`,
-    }),
+    }, ownerEmail),
   ]);
 }
 
@@ -264,12 +264,12 @@ async function handleActivityCreated(prisma, data) {
   console.log(`[Activity] Criada: ${activity.title} para ${lead.name}`);
   await Promise.all([
     notifyNewActivity(activity, lead, prisma),
-    sendPushToAll(prisma, {
+    sendPushToLeadOwner(prisma, {
       title: '📋 Nova Atividade',
       body:  `${activity.title} · ${lead.name}`,
       url:   '/activities',
       tag:   `activity-${activity.id}`,
-    }),
+    }, lead.ownerEmail),
   ]);
 }
 
@@ -299,8 +299,7 @@ async function handleLeadStatusChange(prisma, data, newStatus, label) {
 
   console.log(`[Webhook] ${label}: ${lead.name}`);
 
-  // Notifica via push
-  await sendPushToAll(prisma, {
+  await sendPushToAdmins(prisma, {
     title: label,
     body:  `${lead.name}${lead.company ? ' · ' + lead.company : ''}`,
     url:   '/kanban',
