@@ -10,6 +10,7 @@ const whatsappRouter = require('./whatsapp');
 const { router: kanbanRouter, seedDefaultColumns } = require('./kanban');
 const { router: pushRouter } = require('./push');
 const { startSync } = require('./meetime-sync');
+const { scheduleAt19h } = require('./daily-report');
 
 const app = express();
 const prisma = new PrismaClient();
@@ -49,6 +50,9 @@ async function start() {
 
   // Inicia polling de leads + monitor de inatividade
   startSync(prisma);
+
+  // Agenda relatório diário às 19h
+  scheduleAt19h(prisma);
 }
 
 start().catch(console.error);

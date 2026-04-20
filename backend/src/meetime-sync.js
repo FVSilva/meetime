@@ -7,10 +7,10 @@
  *    - Busca leads criados após a última verificação via API Meetime
  *    - Salva no banco e notifica WhatsApp + Google Chat + Push
  *
- * 2. MONITOR DE INATIVIDADE (a cada 5 min)
- *    - Verifica leads ativos sem atividade há ≥ 30 min
- *    - Alerta apenas usuários com role=admin
- *    - Evita spam: só re-alerta após 30 min do último alerta
+ * 2. MONITOR DE INATIVIDADE (a cada 15 min)
+ *    - Verifica leads ativos criados há ≥ 3h sem nenhuma atividade registrada
+ *    - Alerta admins + responsável pelo lead
+ *    - Evita spam: só re-alerta após 3h do último alerta
  */
 
 const axios = require('axios');
@@ -18,9 +18,9 @@ const { notifyNewLead, sendWhatsApp, sendGoogleChat } = require('./notifications
 const { sendPushToLeadOwner, sendPushToAdmins } = require('./push');
 
 const MEETIME_API_BASE = 'https://api.meetime.com.br/v2';
-const POLL_INTERVAL_MS   = 2 * 60 * 1000;  // 2 minutos
-const INACTIVITY_MS      = 5 * 60 * 1000;  // checar a cada 5 min
-const INACTIVE_THRESHOLD = 30 * 60 * 1000; // 30 minutos sem atividade
+const POLL_INTERVAL_MS   = 2  * 60 * 1000;       // 2 minutos
+const INACTIVITY_MS      = 15 * 60 * 1000;       // checar a cada 15 min
+const INACTIVE_THRESHOLD = 3  * 60 * 60 * 1000;  // 3 horas sem atividade
 
 // Guarda o timestamp da última checagem de leads
 let lastLeadCheck = new Date(Date.now() - POLL_INTERVAL_MS);
@@ -143,42 +143,39 @@ async function processApiLead(prisma, data) {
   ]);
 }
 
-// ── Job 2: Monitor de inatividade (30 min) ───────────────────────────────────
+// ── Job 2: Monitor de inatividade (3h) ──────────────────────────────────────
 
 async function checkInactiveLeads(prisma) {
   try {
     const now = new Date();
-    const threshold = new Date(now - INACTIVE_THRESHOLD);
+    const threshold = new Date(now - INACTIVE_THRESHOLD); // 3h atrás
 
-    // Leads ativos (não ganhos/perdidos) sem atividade há 30+ min
-    // E que não receberam alerta nos últimos 30 min
+    // Leads ativos criados há 3+ horas sem nenhuma atividade registrada
+    // e que não receberam alerta nas últimas 3h (anti-spam)
     const staleLeads = await prisma.lead.findMany({
       where: {
         status: { notIn: ['won', 'lost'] },
-        updatedAt: { lt: threshold },
-        // Ignora leads sem nome real
-        NOT: {
-          name: { in: ['Sem nome', 'Lead desconhecido', 'Lead'] }
-        },
-        // Só alerta leads com email ou telefone (leads reais)
+        enteredAt: { lt: threshold },          // criado há mais de 3h
+        activities: { none: {} },              // zero atividades registradas
+        // Ignora leads fantasma (sem nome real)
+        NOT: { name: { in: ['Sem nome', 'Lead desconhecido', 'Lead'] } },
+        // Apenas leads reais (com email ou telefone)
         OR: [
           { email: { not: null } },
           { phone: { not: null } },
         ],
-        AND: [
-          {
-            OR: [
-              { lastInactiveAlertAt: null },
-              { lastInactiveAlertAt: { lt: threshold } },
-            ],
-          }
-        ],
+        AND: [{
+          OR: [
+            { lastInactiveAlertAt: null },
+            { lastInactiveAlertAt: { lt: threshold } },
+          ],
+        }],
       },
     });
 
     if (staleLeads.length === 0) return;
 
-    console.log(`[Inatividade] ${staleLeads.length} lead(s) parado(s) há 30+ min`);
+    console.log(`[Inatividade] ${staleLeads.length} lead(s) sem atividade há 3h+`);
 
     // Busca apenas admins ativos
     const admins = await prisma.user.findMany({
@@ -186,7 +183,7 @@ async function checkInactiveLeads(prisma) {
     });
 
     for (const lead of staleLeads) {
-      const minutesInactive = Math.round((now - lead.updatedAt) / 60000);
+      const minutesInactive = Math.round((now - lead.enteredAt) / 60000);
       await notifyLeadInactive(lead, minutesInactive, admins, prisma);
 
       // Marca o alerta
@@ -259,7 +256,7 @@ function buildInactiveMessage(lead, minutes) {
 
 function startSync(prisma) {
   console.log('[Sync] ▶  Polling de leads iniciado (a cada 2 min)');
-  console.log('[Sync] ▶  Monitor de inatividade iniciado (alerta após 30 min)');
+  console.log('[Sync] ▶  Monitor de inatividade iniciado (alerta após 3h sem atividade)');
 
   // Executa imediatamente na primeira vez
   pollNewLeads(prisma);
