@@ -11,7 +11,7 @@
  *  - Em aberto (qualquer status ≠ won/lost)
  */
 
-const { sendWhatsApp, sendGoogleChat } = require('./notifications');
+const { sendWhatsApp } = require('./notifications');
 
 // ── Heurística PJ / PF ─────────────────────────────────────────────────────
 // Se o lead tem empresa preenchida → PJ (Pessoa Jurídica), caso contrário PF.
@@ -138,9 +138,8 @@ async function sendDailyReport(prisma) {
     // Stats globais
     const totalStats = calcStats(leads);
 
-    // Relatório completo para admins + Google Chat
+    // Relatório completo para admins (Google Chat não recebe resumo diário)
     const fullReport = buildFullReport(byConsultant, totalStats);
-    await sendGoogleChat(fullReport);
 
     // Admins do banco
     const admins = await prisma.user.findMany({ where: { role: 'admin', active: true } });
