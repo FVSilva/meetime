@@ -76,6 +76,18 @@ async function pollNewLeads(prisma) {
   }
 }
 
+async function fetchProspection(externalId, api) {
+  try {
+    const res = await api.get('/prospections', {
+      params: { lead_id: externalId, limit: 1 },
+    });
+    const items = Array.isArray(res.data) ? res.data : (res.data?.data || []);
+    return items[0] || null;
+  } catch {
+    return null;
+  }
+}
+
 async function processApiLead(prisma, data) {
   const externalId = String(data.id);
 
@@ -85,11 +97,17 @@ async function processApiLead(prisma, data) {
   const phone     = data.primaryPhoneString || data.phonesString?.split(',')[0]?.trim()
                   || data.phone || data.mobile || null;
   const company   = data.lead_company || data.company     || data.account?.name || null;
-  const ownerEmail= data.assigned_to?.email || data.owner?.email || null;
-  const assignedTo= data.assigned_to?.name  || data.owner?.name  || null;
   const enteredAt = data.lead_created_date || data.created_at
     ? new Date(data.lead_created_date || data.created_at)
     : new Date();
+
+  // Busca responsável e cadência na prospecção
+  const api = meetimeApi();
+  const prosp = await fetchProspection(externalId, api);
+  const assignedTo = prosp?.owner_name || data.assigned_to?.name  || null;
+  const ownerEmail = data.assigned_to?.email || data.owner?.email  || null;
+  const cadence    = prosp?.cadence    || null;
+  const source     = prosp?.lead_base  || data.source || data.nomeDaBase || null;
 
   // Evita duplicatas
   const existing = await prisma.lead.findUnique({ where: { externalId } });
@@ -102,7 +120,7 @@ async function processApiLead(prisma, data) {
       email,
       phone,
       company,
-      source:    data.source || data.nomeDaBase || null,
+      source,
       assignedTo,
       ownerEmail,
       enteredAt,
@@ -114,7 +132,7 @@ async function processApiLead(prisma, data) {
 
   // Notifica
   await Promise.allSettled([
-    notifyNewLead(lead, prisma),
+    notifyNewLead(lead, prisma, cadence),
     sendPushToLeadOwner(prisma, {
       title: '🔔 Novo Lead!',
       body:  `${lead.name}${lead.company ? ' · ' + lead.company : ''}`,

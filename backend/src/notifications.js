@@ -81,7 +81,7 @@ async function resolveRecipients(prisma, ownerEmail) {
 
 // ── Mensagens ────────────────────────────────────────────────────────────────
 
-function buildLeadMessage(lead, recipientName = '') {
+function buildLeadMessage(lead, recipientName = '', cadence = null) {
   const greeting = recipientName ? `Olá *${recipientName}*! ` : '';
   return [
     `🔔 ${greeting}*Novo Lead no Meetime!*`,
@@ -90,7 +90,9 @@ function buildLeadMessage(lead, recipientName = '') {
     lead.company    ? `🏢 ${lead.company}`              : null,
     lead.email      ? `📧 ${lead.email}`                : null,
     lead.phone      ? `📱 ${lead.phone}`                : null,
-    lead.assignedTo ? `👥 Resp.: ${lead.assignedTo}`    : null,
+    lead.assignedTo ? `👥 Resp.: *${lead.assignedTo}*`  : null,
+    cadence         ? `📋 Cadência: ${cadence}`          : null,
+    lead.source     ? `📂 Base: ${lead.source}`          : null,
     ``,
     `⚡ Faça o primeiro contato agora!`,
     `🔗 ${lead.publicUrl || 'https://app.meetime.com.br/prospection'}`,
@@ -113,16 +115,16 @@ function buildActivityMessage(activity, lead, recipientName = '') {
 
 // ── Notificações públicas ────────────────────────────────────────────────────
 
-async function notifyNewLead(lead, prisma) {
+async function notifyNewLead(lead, prisma, cadence = null) {
   const recipients = await resolveRecipients(prisma, lead.ownerEmail);
 
   console.log(`[Notif] Novo lead "${lead.name}" → ${recipients.length} destinatário(s)`);
 
-  const gchatMsg = buildLeadMessage(lead);
+  const gchatMsg = buildLeadMessage(lead, '', cadence);
   const tasks = [sendGoogleChat(gchatMsg)];
 
   for (const r of recipients) {
-    const msg = buildLeadMessage(lead, r.name);
+    const msg = buildLeadMessage(lead, r.name, cadence);
     tasks.push(sendWhatsApp(r.phone, msg));
   }
 
