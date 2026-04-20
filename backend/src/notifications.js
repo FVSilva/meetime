@@ -93,7 +93,7 @@ function buildLeadMessage(lead, recipientName = '') {
     lead.assignedTo ? `👥 Resp.: ${lead.assignedTo}`    : null,
     ``,
     `⚡ Faça o primeiro contato agora!`,
-    `🔗 https://app.meetime.com.br/leads/${lead.externalId}`,
+    `🔗 ${lead.publicUrl || 'https://app.meetime.com.br/prospection'}`,
   ].filter(l => l !== null).join('\n');
 }
 

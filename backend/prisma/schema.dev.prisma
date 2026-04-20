@@ -21,6 +21,7 @@ model Lead {
   enteredAt           DateTime  @default(now())
   firstContactAt      DateTime?
   responseTimeSec     Int?
+  publicUrl           String?
   lastInactiveAlertAt DateTime?
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt

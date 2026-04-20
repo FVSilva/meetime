@@ -102,10 +102,11 @@ async function processApiLead(prisma, data) {
       email,
       phone,
       company,
-      source:     data.source || data.nomeDaBase || null,
+      source:    data.source || data.nomeDaBase || null,
       assignedTo,
       ownerEmail,
       enteredAt,
+      publicUrl: data.public_url || null,
     },
   });
 
@@ -209,7 +210,7 @@ function buildInactiveMessage(lead, minutes) {
     lead.assignedTo ? `👥 Resp.: ${lead.assignedTo}` : null,
     ``,
     `⚡ Nenhuma ação registrada nos últimos ${minutes} min!`,
-    `🔗 https://app.meetime.com.br/leads/${lead.externalId}`,
+    `🔗 ${lead.publicUrl || 'https://app.meetime.com.br/prospection'}`,
   ].filter(Boolean).join('\n');
 }
 
