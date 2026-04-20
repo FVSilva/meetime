@@ -155,9 +155,22 @@ async function checkInactiveLeads(prisma) {
       where: {
         status: { notIn: ['won', 'lost'] },
         updatedAt: { lt: threshold },
+        // Ignora leads sem nome real
+        NOT: {
+          name: { in: ['Sem nome', 'Lead desconhecido', 'Lead'] }
+        },
+        // Só alerta leads com email ou telefone (leads reais)
         OR: [
-          { lastInactiveAlertAt: null },
-          { lastInactiveAlertAt: { lt: threshold } },
+          { email: { not: null } },
+          { phone: { not: null } },
+        ],
+        AND: [
+          {
+            OR: [
+              { lastInactiveAlertAt: null },
+              { lastInactiveAlertAt: { lt: threshold } },
+            ],
+          }
         ],
       },
     });
@@ -216,18 +229,27 @@ async function notifyLeadInactive(lead, minutes, admins, prisma) {
   console.log(`[Inatividade] ⚠️  Alerta enviado: ${lead.name} (${minutes} min parado)`);
 }
 
+const STATUS_LABEL = {
+  new:       '🆕 Novo',
+  contacted: '📞 Contatado',
+  qualified: '✅ Qualificado',
+  won:       '🏆 Ganho',
+  lost:      '❌ Perdido',
+};
+
 function buildInactiveMessage(lead, minutes) {
   return [
-    `⏰ *Lead parado há ${minutes} minutos!*`,
+    `⏰ *Atenção! Lead sem atividade há ${minutes} min*`,
     ``,
     `👤 *${lead.name}*`,
-    lead.company ? `🏢 ${lead.company}` : null,
-    lead.email   ? `📧 ${lead.email}`   : null,
-    lead.phone   ? `📱 ${lead.phone}`   : null,
-    `📊 Status: ${lead.status}`,
-    lead.assignedTo ? `👥 Resp.: ${lead.assignedTo}` : null,
+    lead.company    ? `🏢 ${lead.company}`                                    : null,
+    lead.email      ? `📧 ${lead.email}`                                      : null,
+    lead.phone      ? `📱 ${lead.phone}`                                      : null,
+    lead.assignedTo ? `👥 Resp.: *${lead.assignedTo}*`                        : `👥 Resp.: _sem responsável_`,
+    `📊 Status: ${STATUS_LABEL[lead.status] || lead.status}`,
+    lead.source     ? `📂 Base: ${lead.source}`                               : null,
     ``,
-    `⚡ Nenhuma ação registrada nos últimos ${minutes} min!`,
+    `⚠️ Nenhuma ação em ${minutes} minutos — entre em contato!`,
     `🔗 ${lead.publicUrl || 'https://app.meetime.com.br/prospection'}`,
   ].filter(Boolean).join('\n');
 }
