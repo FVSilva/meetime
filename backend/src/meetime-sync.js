@@ -78,7 +78,18 @@ async function pollNewLeads(prisma) {
 
 async function processApiLead(prisma, data) {
   const externalId = String(data.id);
-  const ownerEmail = data.assigned_to?.email || data.owner?.email || null;
+
+  // Meetime API usa lead_name, lead_email, lead_company etc.
+  const name      = data.lead_name    || data.name        || data.contact_name || 'Sem nome';
+  const email     = data.lead_email   || data.email       || null;
+  const phone     = data.primaryPhoneString || data.phonesString?.split(',')[0]?.trim()
+                  || data.phone || data.mobile || null;
+  const company   = data.lead_company || data.company     || data.account?.name || null;
+  const ownerEmail= data.assigned_to?.email || data.owner?.email || null;
+  const assignedTo= data.assigned_to?.name  || data.owner?.name  || null;
+  const enteredAt = data.lead_created_date || data.created_at
+    ? new Date(data.lead_created_date || data.created_at)
+    : new Date();
 
   // Evita duplicatas
   const existing = await prisma.lead.findUnique({ where: { externalId } });
@@ -87,14 +98,14 @@ async function processApiLead(prisma, data) {
   const lead = await prisma.lead.create({
     data: {
       externalId,
-      name:       data.name        || data.contact_name || 'Sem nome',
-      email:      data.email       || null,
-      phone:      data.phone       || data.mobile       || null,
-      company:    data.company     || data.account?.name || null,
-      source:     data.source      || null,
-      assignedTo: data.assigned_to?.name || data.owner?.name || null,
+      name,
+      email,
+      phone,
+      company,
+      source:     data.source || data.nomeDaBase || null,
+      assignedTo,
       ownerEmail,
-      enteredAt:  data.created_at ? new Date(data.created_at) : new Date(),
+      enteredAt,
     },
   });
 
