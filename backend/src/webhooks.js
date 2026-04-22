@@ -1,8 +1,8 @@
 const express = require('express');
 const router = express.Router();
-const { notifyNewLead, notifyNewActivity } = require('./notifications');
+const { notifyNewLead } = require('./notifications');
 const { processCallRecording } = require('./transcription');
-const { sendPushToAll, sendPushToAdmins, sendPushToLeadOwner } = require('./push');
+const { sendPushToLeadOwner } = require('./push');
 
 // Helper para pegar prisma do app
 function db(req) {
@@ -262,15 +262,6 @@ async function handleActivityCreated(prisma, data) {
   });
 
   console.log(`[Activity] Criada: ${activity.title} para ${lead.name}`);
-  await Promise.all([
-    notifyNewActivity(activity, lead, prisma),
-    sendPushToLeadOwner(prisma, {
-      title: '📋 Nova Atividade',
-      body:  `${activity.title} · ${lead.name}`,
-      url:   '/activities',
-      tag:   `activity-${activity.id}`,
-    }, lead.ownerEmail),
-  ]);
 }
 
 // ── Handlers novos ──────────────────────────────────────────────────────────
@@ -298,13 +289,6 @@ async function handleLeadStatusChange(prisma, data, newStatus, label) {
   });
 
   console.log(`[Webhook] ${label}: ${lead.name}`);
-
-  await sendPushToAdmins(prisma, {
-    title: label,
-    body:  `${lead.name}${lead.company ? ' · ' + lead.company : ''}`,
-    url:   '/kanban',
-    tag:   `status-${lead.id}`,
-  });
 }
 
 async function handleCallStarted(prisma, data) {
@@ -411,17 +395,7 @@ async function handleFlowActivity(prisma, data, outcome) {
   const icon = outcome === 'done' ? '✅' : '⏭️';
   console.log(`[Webhook] ${icon} Flow ${outcome}: ${activity.title} — ${lead.name}`);
 
-  if (outcome === 'done') {
-    await Promise.allSettled([
-      notifyNewActivity(activity, lead, prisma),
-      sendPushToAll(prisma, {
-        title: '✅ Flow concluído',
-        body:  `${activity.title} · ${lead.name}`,
-        url:   '/activities',
-        tag:   `flow-${activity.id}`,
-      }),
-    ]);
-  }
+  // Sem notificação para flow — alertas apenas para novos leads
 }
 
 // ── Handlers existentes ──────────────────────────────────────────────────────
