@@ -19,15 +19,13 @@
  */
 
 const axios = require('axios');
-const { notifyNewLead, sendWhatsApp, sendGoogleChat } = require('./notifications');
+const { notifyNewLead } = require('./notifications');
 const { sendPushToLeadOwner, sendPushToAdmins } = require('./push');
 const { reportHeartbeat } = require('./health-monitor');
 
 const MEETIME_API_BASE   = 'https://api.meetime.com.br/v2';
-const POLL_INTERVAL_MS   = 2  * 60 * 1000;       // novos leads: a cada 2 min
-const UPDATE_INTERVAL_MS = 5  * 60 * 1000;       // atualizações: a cada 5 min
-const INACTIVITY_MS      = 15 * 60 * 1000;       // inatividade: checar a cada 15 min
-const INACTIVE_THRESHOLD = 3  * 60 * 60 * 1000;  // 3 horas sem atividade
+const POLL_INTERVAL_MS   = 2  * 60 * 1000;  // novos leads: a cada 2 min
+const UPDATE_INTERVAL_MS = 5  * 60 * 1000;  // atualizações: a cada 5 min
 
 let lastLeadCheck  = new Date(Date.now() - POLL_INTERVAL_MS);
 let lastUpdateSync = new Date(Date.now() - UPDATE_INTERVAL_MS);
@@ -274,138 +272,20 @@ async function syncLeadUpdate(prisma, data) {
   console.log(`[Sync] 🔄 Lead atualizado: ${name}${assignedTo ? ' → ' + assignedTo : ''}${newStatus !== existing.status ? ' [' + existing.status + ' → ' + newStatus + ']' : ''}`);
 }
 
-// ── Horário comercial ────────────────────────────────────────────────────────
-
-function isBusinessHours() {
-  const now  = new Date();
-  const hour = now.getHours(); // hora local do servidor (UTC no Render)
-  // Render roda em UTC — ajusta para BRT (UTC-3)
-  const brtHour = (hour - 3 + 24) % 24;
-  const day     = now.getDay(); // 0=dom, 6=sáb
-  return day >= 1 && day <= 5 && brtHour >= 8 && brtHour < 18;
-}
-
-// ── Job 3: Monitor de inatividade (3h) ──────────────────────────────────────
-
-async function checkInactiveLeads(prisma) {
-  try {
-    const now       = new Date();
-    const threshold = new Date(now - INACTIVE_THRESHOLD);
-
-    const staleLeads = await prisma.lead.findMany({
-      where: {
-        status:    { notIn: ['won', 'lost'] },
-        enteredAt: { lt: threshold },
-        activities: { none: {} },
-        NOT: { name: { in: ['Sem nome', 'Lead desconhecido', 'Lead'] } },
-        OR: [
-          { email: { not: null } },
-          { phone: { not: null } },
-        ],
-        AND: [{
-          OR: [
-            { lastInactiveAlertAt: null },
-            { lastInactiveAlertAt: { lt: threshold } },
-          ],
-        }],
-      },
-    });
-
-    reportHeartbeat('checkInactivity');
-    if (staleLeads.length === 0) return;
-
-    // Só envia alertas em horário comercial (08h–18h, seg–sex, BRT)
-    if (!isBusinessHours()) {
-      console.log(`[Inatividade] ${staleLeads.length} lead(s) parado(s) — fora do horário comercial, pulando alertas`);
-      return;
-    }
-
-    console.log(`[Inatividade] ${staleLeads.length} lead(s) sem atividade há 3h+`);
-
-    const admins = await prisma.user.findMany({
-      where: { role: 'admin', active: true },
-    });
-
-    for (const lead of staleLeads) {
-      const minutesInactive = Math.round((now - lead.enteredAt) / 60000);
-      await notifyLeadInactive(lead, minutesInactive, admins, prisma);
-      await prisma.lead.update({
-        where: { id: lead.id },
-        data:  { lastInactiveAlertAt: now },
-      });
-    }
-  } catch (err) {
-    console.error('[Inatividade] Erro:', err.message);
-  }
-}
-
-async function notifyLeadInactive(lead, minutes, admins, prisma) {
-  const msg   = buildInactiveMessage(lead, minutes);
-  const tasks = [sendGoogleChat(msg)];
-
-  if (admins.length > 0) {
-    for (const admin of admins) {
-      tasks.push(sendWhatsApp(admin.phone, `Olá *${admin.name}*!\n\n${msg}`));
-    }
-  } else {
-    const phones = (process.env.NOTIF_PHONES || '').split(',').map(p => p.trim()).filter(Boolean);
-    for (const phone of phones) tasks.push(sendWhatsApp(phone, msg));
-  }
-
-  tasks.push(
-    sendPushToAdmins(prisma, {
-      title: '⏰ Lead parado há ' + minutes + ' min',
-      body:  `${lead.name}${lead.company ? ' · ' + lead.company : ''} — sem atividade`,
-      url:   '/kanban',
-      tag:   `inactive-${lead.id}`,
-    })
-  );
-
-  await Promise.allSettled(tasks);
-  console.log(`[Inatividade] ⚠️  Alerta enviado: ${lead.name} (${minutes} min)`);
-}
-
-const STATUS_LABEL = {
-  new:       '🆕 Novo',
-  contacted: '📞 Contatado',
-  qualified: '✅ Qualificado',
-  won:       '🏆 Ganho',
-  lost:      '❌ Perdido',
-};
-
-function buildInactiveMessage(lead, minutes) {
-  return [
-    `⏰ *Atenção! Lead sem atividade há ${minutes} min*`,
-    ``,
-    `👤 *${lead.name}*`,
-    lead.company    ? `🏢 ${lead.company}`                     : null,
-    lead.email      ? `📧 ${lead.email}`                       : null,
-    lead.phone      ? `📱 ${lead.phone}`                       : null,
-    lead.assignedTo ? `👥 Resp.: *${lead.assignedTo}*`         : `👥 Resp.: _sem responsável_`,
-    `📊 Status: ${STATUS_LABEL[lead.status] || lead.status}`,
-    lead.source     ? `📂 Base: ${lead.source}`                : null,
-    ``,
-    `⚠️ Nenhuma ação em ${minutes} minutos — entre em contato!`,
-    `🔗 ${lead.publicUrl || 'https://app.meetime.com.br/prospection'}`,
-  ].filter(Boolean).join('\n');
-}
 
 // ── Inicialização ────────────────────────────────────────────────────────────
 
 function startSync(prisma) {
   console.log('[Sync] ▶  Polling de novos leads (a cada 2 min)');
   console.log('[Sync] ▶  Polling de atualizações (a cada 5 min)');
-  console.log('[Sync] ▶  Monitor de inatividade (alerta após 3h sem atividade)');
 
   // Executa imediatamente
   pollNewLeads(prisma);
   pollUpdatedLeads(prisma);
-  checkInactiveLeads(prisma);
 
   const intervals = {
-    pollNewLeads:     setInterval(() => pollNewLeads(prisma),      POLL_INTERVAL_MS),
-    pollUpdatedLeads: setInterval(() => pollUpdatedLeads(prisma),  UPDATE_INTERVAL_MS),
-    checkInactivity:  setInterval(() => checkInactiveLeads(prisma), INACTIVITY_MS),
+    pollNewLeads:     setInterval(() => pollNewLeads(prisma),     POLL_INTERVAL_MS),
+    pollUpdatedLeads: setInterval(() => pollUpdatedLeads(prisma), UPDATE_INTERVAL_MS),
   };
 
   // Restarters: reinicia o intervalo do job se o health monitor detectar problema
@@ -419,11 +299,6 @@ function startSync(prisma) {
       clearInterval(intervals.pollUpdatedLeads);
       pollUpdatedLeads(prisma);
       intervals.pollUpdatedLeads = setInterval(() => pollUpdatedLeads(prisma), UPDATE_INTERVAL_MS);
-    },
-    checkInactivity: () => {
-      clearInterval(intervals.checkInactivity);
-      checkInactiveLeads(prisma);
-      intervals.checkInactivity = setInterval(() => checkInactiveLeads(prisma), INACTIVITY_MS);
     },
   };
 

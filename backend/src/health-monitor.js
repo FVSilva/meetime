@@ -24,7 +24,6 @@ const CHECK_INTERVAL_MS = 10 * 60 * 1000; // checa a cada 10 min
 const heartbeats = {
   pollNewLeads:     { last: null, maxGapMs: 6  * 60 * 1000 },  // tolerância: 6 min (ciclo 2 min)
   pollUpdatedLeads: { last: null, maxGapMs: 12 * 60 * 1000 },  // tolerância: 12 min (ciclo 5 min)
-  checkInactivity:  { last: null, maxGapMs: 35 * 60 * 1000 },  // tolerância: 35 min (ciclo 15 min)
 };
 
 function reportHeartbeat(jobName) {

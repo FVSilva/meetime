@@ -11,6 +11,7 @@ const { router: kanbanRouter, seedDefaultColumns } = require('./kanban');
 const { router: pushRouter } = require('./push');
 const { startSync } = require('./meetime-sync');
 const { startHealthMonitor, getHealthStatus } = require('./health-monitor');
+const { scheduleAt19h } = require('./daily-report');
 
 const app = express();
 const prisma = new PrismaClient();
@@ -57,6 +58,9 @@ async function start() {
 
   // Inicia monitor de saúde com capacidade de reiniciar jobs
   startHealthMonitor(prisma, jobRestarters);
+
+  // Relatório diário às 19h BRT
+  scheduleAt19h(prisma);
 }
 
 start().catch(console.error);
