@@ -62,41 +62,76 @@ async function sendGoogleChat(text) {
  *
  * Filtra apenas usuários ativos.
  */
-// Normaliza string: minúsculas + sem acento (para comparação flexível)
+// Normaliza: minúsculas + sem acento + sem caracteres especiais
 function norm(str) {
-  return (str || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+  return (str || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '') // remove diacríticos (ê→e, ã→a etc.)
+    .replace(/[^a-z0-9\s]/g, '')     // remove qualquer caractere especial restante (^, °, etc.)
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
-// Verifica se dois nomes batem (ex: "Erica Marja" == "ERICA MARJA" ou "Vanessa Feijó" ⊂ "Vanessa Feijó de Jesus")
+// Verifica se dois nomes batem com várias estratégias:
+// 1. Igualdade exata (normalizada)
+// 2. Um começa com o outro (ex: "Rian Lima" ⊂ "Rian Lima Roda")
+// 3. Primeiro nome + sobrenome (primeiras 2 palavras batem)
 function namesMatch(a, b) {
   const na = norm(a);
   const nb = norm(b);
-  return na === nb || na.startsWith(nb) || nb.startsWith(na);
+
+  if (!na || !nb) return false;
+
+  // Estratégia 1: exato
+  if (na === nb) return true;
+
+  // Estratégia 2: prefixo (um contém o outro no início)
+  if (na.startsWith(nb) || nb.startsWith(na)) return true;
+
+  // Estratégia 3: primeiras 2 palavras batem (ex: "Kauê Brito" vs "Kauê Brito de Souza")
+  const wordsA = na.split(' ').slice(0, 2).join(' ');
+  const wordsB = nb.split(' ').slice(0, 2).join(' ');
+  if (wordsA.length > 4 && wordsA === wordsB) return true;
+
+  // Estratégia 4: primeiro nome bate E tem pelo menos 5 chars (evita falsos positivos)
+  const firstA = na.split(' ')[0];
+  const firstB = nb.split(' ')[0];
+  if (firstA.length >= 5 && firstA === firstB) return true;
+
+  return false;
 }
 
 async function resolveRecipients(prisma, ownerEmail, assignedTo) {
   const allUsers = await prisma.user.findMany({ where: { active: true } });
 
   if (allUsers.length === 0) {
-    // Fallback: usa NOTIF_PHONES do .env
     const phones = (process.env.NOTIF_PHONES || '').split(',').map(p => p.trim()).filter(Boolean);
     return phones.map(phone => ({ phone, source: 'env' }));
   }
 
   const recipients = [];
+  let sdrFound = false;
 
   for (const user of allUsers) {
     if (user.role === 'admin') {
-      // Admins recebem tudo
       recipients.push({ phone: user.phone, name: user.name, role: 'admin' });
     } else {
-      // SDR: tenta match por email primeiro, depois por nome
       const matchEmail = ownerEmail && norm(user.email) === norm(ownerEmail);
       const matchName  = !matchEmail && assignedTo && namesMatch(user.name, assignedTo);
+
       if (matchEmail || matchName) {
         recipients.push({ phone: user.phone, name: user.name, role: 'sdr' });
+        sdrFound = true;
+        console.log(`[Notif] ✓ SDR encontrado: "${user.name}" via ${matchEmail ? 'email' : 'nome'}`);
       }
     }
+  }
+
+  // Log de debug quando não encontra SDR — ajuda identificar problemas de nome
+  if (!sdrFound && assignedTo) {
+    const sdrs = allUsers.filter(u => u.role === 'sdr').map(u => `"${u.name}"`).join(', ');
+    console.warn(`[Notif] ⚠️  Nenhum SDR encontrado para assignedTo="${assignedTo}". SDRs cadastrados: ${sdrs}`);
   }
 
   return recipients;
