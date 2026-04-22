@@ -11,6 +11,55 @@
 
 const { sendWhatsApp, sendGoogleChat } = require('./notifications');
 
+// ── Resolução de SDR por nome (ownerEmail é sempre null na API Meetime) ───────
+function norm(str) {
+  return (str || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function levenshtein(a, b) {
+  const m = a.length, n = b.length;
+  const dp = Array.from({ length: m + 1 }, (_, i) =>
+    Array.from({ length: n + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0))
+  );
+  for (let i = 1; i <= m; i++)
+    for (let j = 1; j <= n; j++)
+      dp[i][j] = a[i-1] === b[j-1]
+        ? dp[i-1][j-1]
+        : 1 + Math.min(dp[i-1][j], dp[i][j-1], dp[i-1][j-1]);
+  return dp[m][n];
+}
+
+function namesMatch(a, b) {
+  const na = norm(a), nb = norm(b);
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+  if (na.startsWith(nb) || nb.startsWith(na)) return true;
+  const wordsA = na.split(' ').slice(0, 2).join(' ');
+  const wordsB = nb.split(' ').slice(0, 2).join(' ');
+  if (wordsA.length > 4 && wordsA === wordsB) return true;
+  const firstA = na.split(' ')[0], firstB = nb.split(' ')[0];
+  if (firstA.length >= 5 && firstA === firstB) return true;
+  if (na.length >= 6 && Math.abs(na.length - nb.length) <= 2 && levenshtein(na, nb) <= 1) return true;
+  return false;
+}
+
+async function findSdrByName(prisma, consultantName, adminEmails) {
+  const sdrs = await prisma.user.findMany({
+    where: { role: 'sdr', active: true },
+  });
+  const match = sdrs.find(u =>
+    namesMatch(u.name, consultantName) &&
+    !adminEmails.has(u.email.toLowerCase())
+  );
+  return match || null;
+}
+
 // ── Heurística PJ / PF ─────────────────────────────────────────────────────
 function isPJ(lead) { return !!lead.company; }
 
@@ -165,17 +214,17 @@ async function sendDailyReport(prisma) {
       }
     }
 
-    // SDRs recebem apenas o seu bloco (sem lista de inativos)
+    // SDRs recebem apenas o seu bloco (resolve por nome pois ownerEmail é null na API)
     for (const consultant of byConsultant.values()) {
-      if (!consultant.email || adminEmails.has(consultant.email.toLowerCase())) continue;
-
-      const sdr = await prisma.user.findFirst({
-        where: { email: { equals: consultant.email, mode: 'insensitive' }, active: true },
-      });
-      if (!sdr?.phone) continue;
+      const sdr = await findSdrByName(prisma, consultant.name, adminEmails);
+      if (!sdr?.phone) {
+        console.log(`[Relatório] ⚠️  SDR não encontrado para "${consultant.name}" — sem envio individual`);
+        continue;
+      }
 
       const stats = calcStats(consultant.leads);
       await sendWhatsApp(sdr.phone, buildConsultantBlock(consultant.name, stats, sdr.name));
+      console.log(`[Relatório] ✓ Bloco enviado para SDR: ${sdr.name}`);
     }
 
     console.log(`[Relatório] ✅ Enviado — ${leads.length} lead(s) do dia | ${inactiveLeads.length} inativos`);
