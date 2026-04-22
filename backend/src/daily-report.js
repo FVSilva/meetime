@@ -236,18 +236,7 @@ async function sendDailyReport(prisma) {
       }
     }
 
-    // SDRs recebem apenas o seu bloco (resolve por nome pois ownerEmail é null na API)
-    for (const consultant of byConsultant.values()) {
-      const sdr = await findSdrByName(prisma, consultant.name, adminEmails);
-      if (!sdr?.phone) {
-        console.log(`[Relatório] ⚠️  SDR não encontrado para "${consultant.name}" — sem envio individual`);
-        continue;
-      }
-
-      const stats = calcStats(consultant.leads);
-      await sendWhatsApp(sdr.phone, buildConsultantBlock(consultant.name, stats, sdr.name));
-      console.log(`[Relatório] ✓ Bloco enviado para SDR: ${sdr.name}`);
-    }
+    // SDRs não recebem relatório diário — apenas admins
 
     console.log(`[Relatório] ✅ Enviado — ${leads.length} lead(s) do dia | ${inactiveLeads.length} inativos`);
   } catch (err) {
