@@ -55,11 +55,23 @@ async function sendGoogleChat(text) {
  *
  * Filtra apenas usuários ativos.
  */
-async function resolveRecipients(prisma, ownerEmail) {
+// Normaliza string: minúsculas + sem acento (para comparação flexível)
+function norm(str) {
+  return (str || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+}
+
+// Verifica se dois nomes batem (ex: "Erica Marja" == "ERICA MARJA" ou "Vanessa Feijó" ⊂ "Vanessa Feijó de Jesus")
+function namesMatch(a, b) {
+  const na = norm(a);
+  const nb = norm(b);
+  return na === nb || na.startsWith(nb) || nb.startsWith(na);
+}
+
+async function resolveRecipients(prisma, ownerEmail, assignedTo) {
   const allUsers = await prisma.user.findMany({ where: { active: true } });
 
   if (allUsers.length === 0) {
-    // Fallback: usa NOTIF_PHONES do .env (compatibilidade com a config antiga)
+    // Fallback: usa NOTIF_PHONES do .env
     const phones = (process.env.NOTIF_PHONES || '').split(',').map(p => p.trim()).filter(Boolean);
     return phones.map(phone => ({ phone, source: 'env' }));
   }
@@ -70,9 +82,13 @@ async function resolveRecipients(prisma, ownerEmail) {
     if (user.role === 'admin') {
       // Admins recebem tudo
       recipients.push({ phone: user.phone, name: user.name, role: 'admin' });
-    } else if (ownerEmail && user.email.toLowerCase() === ownerEmail.toLowerCase()) {
-      // SDR recebe apenas se for o dono do lead
-      recipients.push({ phone: user.phone, name: user.name, role: 'sdr' });
+    } else {
+      // SDR: tenta match por email primeiro, depois por nome
+      const matchEmail = ownerEmail && norm(user.email) === norm(ownerEmail);
+      const matchName  = !matchEmail && assignedTo && namesMatch(user.name, assignedTo);
+      if (matchEmail || matchName) {
+        recipients.push({ phone: user.phone, name: user.name, role: 'sdr' });
+      }
     }
   }
 
@@ -116,7 +132,7 @@ function buildActivityMessage(activity, lead, recipientName = '') {
 // ── Notificações públicas ────────────────────────────────────────────────────
 
 async function notifyNewLead(lead, prisma, cadence = null) {
-  const recipients = await resolveRecipients(prisma, lead.ownerEmail);
+  const recipients = await resolveRecipients(prisma, lead.ownerEmail, lead.assignedTo);
 
   console.log(`[Notif] Novo lead "${lead.name}" → ${recipients.length} destinatário(s)`);
 
@@ -129,7 +145,7 @@ async function notifyNewLead(lead, prisma, cadence = null) {
 }
 
 async function notifyNewActivity(activity, lead, prisma) {
-  const recipients = await resolveRecipients(prisma, lead.ownerEmail);
+  const recipients = await resolveRecipients(prisma, lead.ownerEmail, lead.assignedTo);
 
   console.log(`[Notif] Nova atividade "${activity.title}" → ${recipients.length} destinatário(s)`);
 
