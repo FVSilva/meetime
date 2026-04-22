@@ -77,6 +77,20 @@ function norm(str) {
 // 1. Igualdade exata (normalizada)
 // 2. Um começa com o outro (ex: "Rian Lima" ⊂ "Rian Lima Roda")
 // 3. Primeiro nome + sobrenome (primeiras 2 palavras batem)
+// 4. Primeiro nome idêntico (≥5 chars)
+// 5. Levenshtein ≤ 1 (ex: "Britto" vs "Brito")
+
+function levenshtein(a, b) {
+  const m = a.length, n = b.length;
+  const dp = Array.from({ length: m + 1 }, (_, i) => Array.from({ length: n + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0)));
+  for (let i = 1; i <= m; i++)
+    for (let j = 1; j <= n; j++)
+      dp[i][j] = a[i - 1] === b[j - 1]
+        ? dp[i - 1][j - 1]
+        : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+  return dp[m][n];
+}
+
 function namesMatch(a, b) {
   const na = norm(a);
   const nb = norm(b);
@@ -98,6 +112,9 @@ function namesMatch(a, b) {
   const firstA = na.split(' ')[0];
   const firstB = nb.split(' ')[0];
   if (firstA.length >= 5 && firstA === firstB) return true;
+
+  // Estratégia 5: Levenshtein ≤ 1 em nomes longos (trata "Britto" vs "Brito", typos)
+  if (na.length >= 6 && Math.abs(na.length - nb.length) <= 2 && levenshtein(na, nb) <= 1) return true;
 
   return false;
 }
