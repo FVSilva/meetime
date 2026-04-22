@@ -1,15 +1,20 @@
 /**
  * meetime-sync.js
  *
- * Dois jobs que rodam em background:
+ * Três jobs em background:
  *
- * 1. POLLING DE LEADS (a cada 2 min)
+ * 1. POLLING DE NOVOS LEADS (a cada 2 min)
  *    - Busca leads criados após a última verificação via API Meetime
  *    - Salva no banco e notifica WhatsApp + Google Chat + Push
  *
- * 2. MONITOR DE INATIVIDADE (a cada 15 min)
+ * 2. POLLING DE ATUALIZAÇÕES (a cada 5 min)
+ *    - Busca leads atualizados no Meetime após a última sync
+ *    - Atualiza nome, empresa, responsável, cadência, status (won/lost)
+ *    - Garante consistência mesmo que webhooks falhem
+ *
+ * 3. MONITOR DE INATIVIDADE (a cada 15 min)
  *    - Verifica leads ativos criados há ≥ 3h sem nenhuma atividade registrada
- *    - Alerta admins + responsável pelo lead
+ *    - Alerta admins via WhatsApp + Google Chat + Push
  *    - Evita spam: só re-alerta após 3h do último alerta
  */
 
@@ -17,13 +22,14 @@ const axios = require('axios');
 const { notifyNewLead, sendWhatsApp, sendGoogleChat } = require('./notifications');
 const { sendPushToLeadOwner, sendPushToAdmins } = require('./push');
 
-const MEETIME_API_BASE = 'https://api.meetime.com.br/v2';
-const POLL_INTERVAL_MS   = 2  * 60 * 1000;       // 2 minutos
-const INACTIVITY_MS      = 15 * 60 * 1000;       // checar a cada 15 min
+const MEETIME_API_BASE   = 'https://api.meetime.com.br/v2';
+const POLL_INTERVAL_MS   = 2  * 60 * 1000;       // novos leads: a cada 2 min
+const UPDATE_INTERVAL_MS = 5  * 60 * 1000;       // atualizações: a cada 5 min
+const INACTIVITY_MS      = 15 * 60 * 1000;       // inatividade: checar a cada 15 min
 const INACTIVE_THRESHOLD = 3  * 60 * 60 * 1000;  // 3 horas sem atividade
 
-// Guarda o timestamp da última checagem de leads
-let lastLeadCheck = new Date(Date.now() - POLL_INTERVAL_MS);
+let lastLeadCheck  = new Date(Date.now() - POLL_INTERVAL_MS);
+let lastUpdateSync = new Date(Date.now() - UPDATE_INTERVAL_MS);
 
 // ── Cliente Meetime API ──────────────────────────────────────────────────────
 
@@ -34,47 +40,14 @@ function meetimeApi() {
   return axios.create({
     baseURL: MEETIME_API_BASE,
     headers: {
-      authorization: token, // Meetime usa token direto sem "Bearer"
+      authorization: token,
       'Content-Type': 'application/json',
     },
     timeout: 15000,
   });
 }
 
-// ── Job 1: Polling de novos leads ────────────────────────────────────────────
-
-async function pollNewLeads(prisma) {
-  try {
-    const since = lastLeadCheck.toISOString();
-    lastLeadCheck = new Date(); // atualiza antes de buscar (evita duplicatas em falha)
-
-    const api = meetimeApi();
-    const res = await api.get('/leads', {
-      params: {
-        lead_created_after: since,
-        limit: 100,
-        start: 0,
-      },
-    });
-
-    // A API pode retornar { leads: [...] } ou diretamente um array
-    const leads = Array.isArray(res.data) ? res.data : (res.data.leads || res.data.data || []);
-
-    if (leads.length === 0) return;
-
-    console.log(`[Sync] ${leads.length} novo(s) lead(s) encontrado(s) via API`);
-
-    for (const item of leads) {
-      await processApiLead(prisma, item);
-    }
-  } catch (err) {
-    if (err.message === 'MEETIME_API_TOKEN não configurado no .env') {
-      // Silencia — token não configurado ainda
-      return;
-    }
-    console.error('[Sync] Erro ao buscar leads:', err.response?.data || err.message);
-  }
-}
+// ── Prospection ──────────────────────────────────────────────────────────────
 
 async function fetchProspection(externalId, api) {
   try {
@@ -88,10 +61,48 @@ async function fetchProspection(externalId, api) {
   }
 }
 
+// Mapeia status da prospecção Meetime → nosso status
+// Só retorna won/lost — não sobrescreve status manuais do kanban
+function mapProspStatus(prosp) {
+  if (!prosp) return null;
+  const s = (prosp.status || '').toLowerCase();
+  const r = (prosp.result  || '').toLowerCase();
+  if (s === 'won' || s === 'finished_positive' || r === 'positive' || r === 'won') return 'won';
+  if (s === 'lost' || s === 'finished_negative' || s === 'disqualified' ||
+      r === 'negative' || r === 'lost') return 'lost';
+  return null;
+}
+
+// ── Job 1: Polling de novos leads ────────────────────────────────────────────
+
+async function pollNewLeads(prisma) {
+  try {
+    const since = lastLeadCheck.toISOString();
+    lastLeadCheck = new Date();
+
+    const api  = meetimeApi();
+    const res  = await api.get('/leads', {
+      params: { lead_created_after: since, limit: 100, start: 0 },
+    });
+
+    const leads = Array.isArray(res.data) ? res.data : (res.data.leads || res.data.data || []);
+    if (leads.length === 0) return;
+
+    console.log(`[Sync] ${leads.length} novo(s) lead(s) encontrado(s)`);
+    for (const item of leads) {
+      await processApiLead(prisma, item);
+    }
+  } catch (err) {
+    if (err.message === 'MEETIME_API_TOKEN não configurado no .env') return;
+    console.error('[Sync] Erro ao buscar novos leads:', err.response?.data || err.message);
+  }
+}
+
 async function processApiLead(prisma, data) {
   const externalId = String(data.id);
+  const existing   = await prisma.lead.findUnique({ where: { externalId } });
+  if (existing) return; // já existe, o job de update cuida
 
-  // Meetime API usa lead_name, lead_email, lead_company etc.
   const name      = data.lead_name    || data.name        || data.contact_name || 'Sem nome';
   const email     = data.lead_email   || data.email       || null;
   const phone     = data.primaryPhoneString || data.phonesString?.split(',')[0]?.trim()
@@ -101,37 +112,23 @@ async function processApiLead(prisma, data) {
     ? new Date(data.lead_created_date || data.created_at)
     : new Date();
 
-  // Busca responsável e cadência na prospecção
-  const api = meetimeApi();
-  const prosp = await fetchProspection(externalId, api);
+  const api        = meetimeApi();
+  const prosp      = await fetchProspection(externalId, api);
   const assignedTo = prosp?.owner_name || data.assigned_to?.name  || null;
   const ownerEmail = data.assigned_to?.email || data.owner?.email  || null;
   const cadence    = prosp?.cadence    || null;
   const source     = prosp?.lead_base  || data.source || data.nomeDaBase || null;
 
-  // Evita duplicatas
-  const existing = await prisma.lead.findUnique({ where: { externalId } });
-  if (existing) return;
-
   const lead = await prisma.lead.create({
     data: {
-      externalId,
-      name,
-      email,
-      phone,
-      company,
-      source,
-      cadence,
-      assignedTo,
-      ownerEmail,
-      enteredAt,
+      externalId, name, email, phone, company,
+      source, cadence, assignedTo, ownerEmail, enteredAt,
       publicUrl: data.public_url || null,
     },
   });
 
-  console.log(`[Sync] ✅ Lead salvo: ${lead.name} | ${ownerEmail || 'sem owner'}`);
+  console.log(`[Sync] ✅ Lead salvo: ${lead.name} | responsável: ${assignedTo || 'sem responsável'}`);
 
-  // Notifica
   await Promise.allSettled([
     notifyNewLead(lead, prisma, cadence),
     sendPushToLeadOwner(prisma, {
@@ -143,23 +140,116 @@ async function processApiLead(prisma, data) {
   ]);
 }
 
-// ── Job 2: Monitor de inatividade (3h) ──────────────────────────────────────
+// ── Job 2: Polling de leads atualizados ──────────────────────────────────────
+
+async function pollUpdatedLeads(prisma) {
+  try {
+    const since = lastUpdateSync.toISOString();
+    lastUpdateSync = new Date();
+
+    const api = meetimeApi();
+    const res = await api.get('/leads', {
+      params: { lead_updated_after: since, limit: 100, start: 0 },
+    });
+
+    const leads = Array.isArray(res.data) ? res.data : (res.data.leads || res.data.data || []);
+    if (leads.length === 0) return;
+
+    console.log(`[Sync] 🔄 ${leads.length} lead(s) atualizado(s) no Meetime`);
+
+    for (const item of leads) {
+      await syncLeadUpdate(prisma, item);
+    }
+  } catch (err) {
+    if (err.message === 'MEETIME_API_TOKEN não configurado no .env') return;
+    // lead_updated_after pode não ser suportado — silencia 400/422
+    if (err.response?.status === 400 || err.response?.status === 422) return;
+    console.error('[Sync] Erro ao buscar leads atualizados:', err.response?.data || err.message);
+  }
+}
+
+async function syncLeadUpdate(prisma, data) {
+  const externalId = String(data.id);
+  const existing   = await prisma.lead.findUnique({ where: { externalId } });
+
+  if (!existing) {
+    // Lead novo que não pegamos antes — processa normalmente
+    await processApiLead(prisma, data);
+    return;
+  }
+
+  // Busca prospecção atualizada
+  const api   = meetimeApi();
+  const prosp = await fetchProspection(externalId, api);
+
+  // Campos que podem ter mudado no Meetime
+  const name       = data.lead_name    || data.name        || existing.name;
+  const email      = data.lead_email   || data.email       || existing.email;
+  const phone      = data.primaryPhoneString || data.phonesString?.split(',')[0]?.trim()
+                   || data.phone || existing.phone;
+  const company    = data.lead_company || data.company     || existing.company;
+  const assignedTo = prosp?.owner_name || data.assigned_to?.name || existing.assignedTo;
+  const ownerEmail = data.assigned_to?.email || data.owner?.email || existing.ownerEmail;
+  const cadence    = prosp?.cadence    || existing.cadence;
+  const source     = prosp?.lead_base  || data.source || existing.source;
+  const publicUrl  = data.public_url   || existing.publicUrl;
+
+  // Status: só atualiza para won/lost (não sobrescreve movimentos manuais do kanban)
+  const mappedStatus = mapProspStatus(prosp);
+  const newStatus    = (mappedStatus && existing.status !== mappedStatus)
+    ? mappedStatus : existing.status;
+
+  // Detecta se algo mudou de fato
+  const changed =
+    name       !== existing.name       ||
+    email      !== existing.email      ||
+    phone      !== existing.phone      ||
+    company    !== existing.company    ||
+    assignedTo !== existing.assignedTo ||
+    ownerEmail !== existing.ownerEmail ||
+    cadence    !== existing.cadence    ||
+    source     !== existing.source     ||
+    newStatus  !== existing.status;
+
+  if (!changed) return; // nada a fazer
+
+  await prisma.lead.update({
+    where: { id: existing.id },
+    data: {
+      name, email, phone, company,
+      assignedTo, ownerEmail, cadence, source, publicUrl,
+      status:    newStatus,
+      updatedAt: new Date(),
+    },
+  });
+
+  console.log(`[Sync] 🔄 Lead atualizado: ${name}${assignedTo ? ' → ' + assignedTo : ''}${newStatus !== existing.status ? ' [' + newStatus + ']' : ''}`);
+}
+
+// ── Horário comercial ────────────────────────────────────────────────────────
+
+function isBusinessHours() {
+  const now  = new Date();
+  const hour = now.getHours(); // hora local do servidor (UTC no Render)
+  // Render roda em UTC — ajusta para BRT (UTC-3)
+  const brtHour = (hour - 3 + 24) % 24;
+  const day     = now.getDay(); // 0=dom, 6=sáb
+  return day >= 1 && day <= 5 && brtHour >= 8 && brtHour < 18;
+}
+
+// ── Job 3: Monitor de inatividade (3h) ──────────────────────────────────────
 
 async function checkInactiveLeads(prisma) {
   try {
-    const now = new Date();
-    const threshold = new Date(now - INACTIVE_THRESHOLD); // 3h atrás
+    const now       = new Date();
+    const threshold = new Date(now - INACTIVE_THRESHOLD);
 
-    // Leads ativos criados há 3+ horas sem nenhuma atividade registrada
-    // e que não receberam alerta nas últimas 3h (anti-spam)
     const staleLeads = await prisma.lead.findMany({
       where: {
-        status: { notIn: ['won', 'lost'] },
-        enteredAt: { lt: threshold },          // criado há mais de 3h
-        activities: { none: {} },              // zero atividades registradas
-        // Ignora leads fantasma (sem nome real)
+        status:    { notIn: ['won', 'lost'] },
+        enteredAt: { lt: threshold },
+        activities: { none: {} },
         NOT: { name: { in: ['Sem nome', 'Lead desconhecido', 'Lead'] } },
-        // Apenas leads reais (com email ou telefone)
         OR: [
           { email: { not: null } },
           { phone: { not: null } },
@@ -175,9 +265,14 @@ async function checkInactiveLeads(prisma) {
 
     if (staleLeads.length === 0) return;
 
+    // Só envia alertas em horário comercial (08h–18h, seg–sex, BRT)
+    if (!isBusinessHours()) {
+      console.log(`[Inatividade] ${staleLeads.length} lead(s) parado(s) — fora do horário comercial, pulando alertas`);
+      return;
+    }
+
     console.log(`[Inatividade] ${staleLeads.length} lead(s) sem atividade há 3h+`);
 
-    // Busca apenas admins ativos
     const admins = await prisma.user.findMany({
       where: { role: 'admin', active: true },
     });
@@ -185,8 +280,6 @@ async function checkInactiveLeads(prisma) {
     for (const lead of staleLeads) {
       const minutesInactive = Math.round((now - lead.enteredAt) / 60000);
       await notifyLeadInactive(lead, minutesInactive, admins, prisma);
-
-      // Marca o alerta
       await prisma.lead.update({
         where: { id: lead.id },
         data:  { lastInactiveAlertAt: now },
@@ -198,8 +291,7 @@ async function checkInactiveLeads(prisma) {
 }
 
 async function notifyLeadInactive(lead, minutes, admins, prisma) {
-  const msg = buildInactiveMessage(lead, minutes);
-
+  const msg   = buildInactiveMessage(lead, minutes);
   const tasks = [sendGoogleChat(msg)];
 
   if (admins.length > 0) {
@@ -207,11 +299,8 @@ async function notifyLeadInactive(lead, minutes, admins, prisma) {
       tasks.push(sendWhatsApp(admin.phone, `Olá *${admin.name}*!\n\n${msg}`));
     }
   } else {
-    // Fallback: NOTIF_PHONES do .env
     const phones = (process.env.NOTIF_PHONES || '').split(',').map(p => p.trim()).filter(Boolean);
-    for (const phone of phones) {
-      tasks.push(sendWhatsApp(phone, msg));
-    }
+    for (const phone of phones) tasks.push(sendWhatsApp(phone, msg));
   }
 
   tasks.push(
@@ -224,7 +313,7 @@ async function notifyLeadInactive(lead, minutes, admins, prisma) {
   );
 
   await Promise.allSettled(tasks);
-  console.log(`[Inatividade] ⚠️  Alerta enviado: ${lead.name} (${minutes} min parado)`);
+  console.log(`[Inatividade] ⚠️  Alerta enviado: ${lead.name} (${minutes} min)`);
 }
 
 const STATUS_LABEL = {
@@ -240,12 +329,12 @@ function buildInactiveMessage(lead, minutes) {
     `⏰ *Atenção! Lead sem atividade há ${minutes} min*`,
     ``,
     `👤 *${lead.name}*`,
-    lead.company    ? `🏢 ${lead.company}`                                    : null,
-    lead.email      ? `📧 ${lead.email}`                                      : null,
-    lead.phone      ? `📱 ${lead.phone}`                                      : null,
-    lead.assignedTo ? `👥 Resp.: *${lead.assignedTo}*`                        : `👥 Resp.: _sem responsável_`,
+    lead.company    ? `🏢 ${lead.company}`                     : null,
+    lead.email      ? `📧 ${lead.email}`                       : null,
+    lead.phone      ? `📱 ${lead.phone}`                       : null,
+    lead.assignedTo ? `👥 Resp.: *${lead.assignedTo}*`         : `👥 Resp.: _sem responsável_`,
     `📊 Status: ${STATUS_LABEL[lead.status] || lead.status}`,
-    lead.source     ? `📂 Base: ${lead.source}`                               : null,
+    lead.source     ? `📂 Base: ${lead.source}`                : null,
     ``,
     `⚠️ Nenhuma ação em ${minutes} minutos — entre em contato!`,
     `🔗 ${lead.publicUrl || 'https://app.meetime.com.br/prospection'}`,
@@ -255,15 +344,17 @@ function buildInactiveMessage(lead, minutes) {
 // ── Inicialização ────────────────────────────────────────────────────────────
 
 function startSync(prisma) {
-  console.log('[Sync] ▶  Polling de leads iniciado (a cada 2 min)');
-  console.log('[Sync] ▶  Monitor de inatividade iniciado (alerta após 3h sem atividade)');
+  console.log('[Sync] ▶  Polling de novos leads (a cada 2 min)');
+  console.log('[Sync] ▶  Polling de atualizações (a cada 5 min)');
+  console.log('[Sync] ▶  Monitor de inatividade (alerta após 3h sem atividade)');
 
-  // Executa imediatamente na primeira vez
+  // Executa imediatamente
   pollNewLeads(prisma);
+  pollUpdatedLeads(prisma);
   checkInactiveLeads(prisma);
 
-  // Agenda os intervalos
   setInterval(() => pollNewLeads(prisma),      POLL_INTERVAL_MS);
+  setInterval(() => pollUpdatedLeads(prisma),  UPDATE_INTERVAL_MS);
   setInterval(() => checkInactiveLeads(prisma), INACTIVITY_MS);
 }
 
