@@ -48,7 +48,7 @@ function meetimeApi() {
   });
 }
 
-// ── Prospection ──────────────────────────────────────────────────────────────
+// ── Prospection & Activities ─────────────────────────────────────────────────
 
 async function fetchProspection(externalId, api) {
   try {
@@ -62,8 +62,22 @@ async function fetchProspection(externalId, api) {
   }
 }
 
+// Verifica se há atividades registradas no Meetime para este lead
+async function fetchHasActivity(externalId, api) {
+  try {
+    const res = await api.get('/activities', {
+      params: { lead_id: externalId, limit: 1 },
+    });
+    const items = Array.isArray(res.data) ? res.data : (res.data?.data || []);
+    return items.length > 0;
+  } catch {
+    return false; // endpoint pode não existir ou ter outra estrutura
+  }
+}
+
 // Mapeia status da prospecção Meetime → nosso status
-// Só retorna won/lost — não sobrescreve status manuais do kanban
+// won/lost: mapeamento explícito
+// null: nenhuma mudança de status (mantém o atual ou aplica lógica de atividades)
 function mapProspStatus(prosp) {
   if (!prosp) return null;
   const s = (prosp.status || '').toLowerCase();
@@ -150,26 +164,35 @@ async function pollUpdatedLeads(prisma) {
     lastUpdateSync = new Date();
 
     const api = meetimeApi();
-    const res = await api.get('/leads', {
-      params: { lead_updated_after: since, limit: 100, start: 0 },
-    });
+    let leads = [];
 
-    const leads = Array.isArray(res.data) ? res.data : (res.data.leads || res.data.data || []);
+    try {
+      // Tenta com lead_updated_after (ideal)
+      const res = await api.get('/leads', {
+        params: { lead_updated_after: since, limit: 100, start: 0 },
+      });
+      leads = Array.isArray(res.data) ? res.data : (res.data.leads || res.data.data || []);
+      console.log(`[Sync] 🔄 ${leads.length} lead(s) atualizado(s) (filtro por data)`);
+    } catch (e) {
+      if (e.response?.status === 400 || e.response?.status === 422) {
+        // lead_updated_after não suportado pela API — fallback: busca os 50 mais recentes
+        console.log('[Sync] 🔄 Parâmetro lead_updated_after não suportado, usando fallback (50 leads recentes)');
+        const res2 = await api.get('/leads', { params: { limit: 50, start: 0 } });
+        leads = Array.isArray(res2.data) ? res2.data : (res2.data.leads || res2.data.data || []);
+        console.log(`[Sync] 🔄 ${leads.length} lead(s) para verificar via fallback`);
+      } else {
+        throw e;
+      }
+    }
+
     reportHeartbeat('pollUpdatedLeads');
     if (leads.length === 0) return;
-
-    console.log(`[Sync] 🔄 ${leads.length} lead(s) atualizado(s) no Meetime`);
 
     for (const item of leads) {
       await syncLeadUpdate(prisma, item);
     }
   } catch (err) {
     if (err.message === 'MEETIME_API_TOKEN não configurado no .env') return;
-    // lead_updated_after pode não ser suportado — silencia 400/422
-    if (err.response?.status === 400 || err.response?.status === 422) {
-      reportHeartbeat('pollUpdatedLeads'); // parâmetro não suportado mas job está vivo
-      return;
-    }
     console.error('[Sync] Erro ao buscar leads atualizados:', err.response?.data || err.message);
   }
 }
@@ -200,10 +223,21 @@ async function syncLeadUpdate(prisma, data) {
   const source     = prosp?.lead_base  || data.source || existing.source;
   const publicUrl  = data.public_url   || existing.publicUrl;
 
-  // Status: só atualiza para won/lost (não sobrescreve movimentos manuais do kanban)
+  // Status: won/lost vêm da prospecção, contacted detectado por atividades
   const mappedStatus = mapProspStatus(prosp);
-  const newStatus    = (mappedStatus && existing.status !== mappedStatus)
-    ? mappedStatus : existing.status;
+  let newStatus = existing.status;
+
+  if (mappedStatus && existing.status !== mappedStatus) {
+    // Atualização definitiva: won ou lost
+    newStatus = mappedStatus;
+  } else if (existing.status === 'new') {
+    // Lead ainda como 'new' — verifica se já há atividades no Meetime (= foi contatado)
+    const hasActivity = await fetchHasActivity(externalId, api);
+    if (hasActivity) {
+      newStatus = 'contacted';
+      console.log(`[Sync] 📞 Lead contactado detectado via atividades: ${name}`);
+    }
+  }
 
   // Detecta se algo mudou de fato
   const changed =
@@ -219,17 +253,25 @@ async function syncLeadUpdate(prisma, data) {
 
   if (!changed) return; // nada a fazer
 
+  const updateData = {
+    name, email, phone, company,
+    assignedTo, ownerEmail, cadence, source, publicUrl,
+    status:    newStatus,
+    updatedAt: new Date(),
+  };
+
+  // Se transicionando para 'contacted', registra o tempo de resposta
+  if (newStatus === 'contacted' && !existing.firstContactAt) {
+    updateData.firstContactAt  = new Date();
+    updateData.responseTimeSec = Math.round((new Date() - existing.enteredAt) / 1000);
+  }
+
   await prisma.lead.update({
     where: { id: existing.id },
-    data: {
-      name, email, phone, company,
-      assignedTo, ownerEmail, cadence, source, publicUrl,
-      status:    newStatus,
-      updatedAt: new Date(),
-    },
+    data:  updateData,
   });
 
-  console.log(`[Sync] 🔄 Lead atualizado: ${name}${assignedTo ? ' → ' + assignedTo : ''}${newStatus !== existing.status ? ' [' + newStatus + ']' : ''}`);
+  console.log(`[Sync] 🔄 Lead atualizado: ${name}${assignedTo ? ' → ' + assignedTo : ''}${newStatus !== existing.status ? ' [' + existing.status + ' → ' + newStatus + ']' : ''}`);
 }
 
 // ── Horário comercial ────────────────────────────────────────────────────────
