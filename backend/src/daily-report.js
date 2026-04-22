@@ -112,29 +112,53 @@ async function collectInactiveLeads(prisma) {
   });
 }
 
-// ── Stats de um grupo de leads ──────────────────────────────────────────────
+// ── Stats e funil de um grupo de leads ─────────────────────────────────────
 function calcStats(leads) {
-  const won    = leads.filter(l => l.status === 'won');
-  const lost   = leads.filter(l => l.status === 'lost');
-  const open   = leads.filter(l => l.status !== 'won' && l.status !== 'lost');
-  const lostPJ = lost.filter(isPJ).length;
-  const lostPF = lost.filter(l => !isPJ(l)).length;
-  return { total: leads.length, won: won.length, lost: lost.length, lostPJ, lostPF, open: open.length };
+  const won       = leads.filter(l => l.status === 'won');
+  const lost      = leads.filter(l => l.status === 'lost');
+  const open      = leads.filter(l => l.status !== 'won' && l.status !== 'lost');
+  const contacted = leads.filter(l => ['contacted','qualified','won','lost'].includes(l.status));
+  const qualified = leads.filter(l => ['qualified','won'].includes(l.status));
+  const lostPJ    = lost.filter(isPJ).length;
+  const lostPF    = lost.filter(l => !isPJ(l)).length;
+  const total     = leads.length;
+  const pct = n  => total > 0 ? Math.round((n / total) * 100) : 0;
+  return {
+    total, open: open.length,
+    won:       won.length,
+    lost:      lost.length, lostPJ, lostPF,
+    contacted: contacted.length,
+    qualified: qualified.length,
+    conversionRate: pct(won.length),
+    contactRate:    pct(contacted.length),
+    qualifiedRate:  pct(qualified.length),
+  };
 }
 
 // ── Mensagem para um consultor (SDR) ───────────────────────────────────────
 function buildConsultantBlock(consultantName, stats, greeting = '') {
-  const header = greeting ? `Olá *${greeting}*! ` : '';
-  const lostDetail = stats.lost > 0 ? ` _(PJ: ${stats.lostPJ} | PF: ${stats.lostPF})_` : '';
+  const header     = greeting ? `Olá *${greeting}*! ` : '';
+  const lostDetail = stats.lost > 0 ? ` (PJ: ${stats.lostPJ} | PF: ${stats.lostPF})` : '';
   return [
-    `📊 ${header}*Relatório do dia*`,
+    `📊 ${header}*Seu relatório do dia*`,
     `📅 ${new Date().toLocaleDateString('pt-BR')}`,
     ``,
     `👤 *${consultantName}*`,
-    `• Leads recebidos: *${stats.total}*`,
-    `• ✅ Convertidos: *${stats.won}*`,
+    `• 📥 Leads recebidos: *${stats.total}*`,
+    `• 📞 Contatados: *${stats.contacted}* (${stats.contactRate}%)`,
+    `• 🎯 Qualificados: *${stats.qualified}* (${stats.qualifiedRate}%)`,
+    `• 🏆 Convertidos: *${stats.won}* (${stats.conversionRate}%)`,
     `• ❌ Perdidos: *${stats.lost}*${lostDetail}`,
     `• ⏳ Em aberto: *${stats.open}*`,
+  ].join('\n');
+}
+
+// ── Bloco de um consultor no relatório do admin ─────────────────────────────
+function buildConsultantBlockAdmin(name, stats) {
+  const lostDetail = stats.lost > 0 ? ` (PJ: ${stats.lostPJ} | PF: ${stats.lostPF})` : '';
+  return [
+    `👤 *${name}*  ·  Taxa: *${stats.conversionRate}%*`,
+    `   📥 ${stats.total}  📞 ${stats.contacted} (${stats.contactRate}%)  🎯 ${stats.qualified} (${stats.qualifiedRate}%)  🏆 ${stats.won}  ❌ ${stats.lost}${lostDetail}`,
   ].join('\n');
 }
 
@@ -142,40 +166,38 @@ function buildConsultantBlock(consultantName, stats, greeting = '') {
 function buildFullReport(byConsultant, totalStats, inactiveLeads) {
   const date  = new Date().toLocaleDateString('pt-BR');
   const lines = [
-    `📊 *Relatório Diário — ${date}*`,
+    `📊 *Análise Diária — ${date}*`,
+    ``,
+    `📈 *Resumo Geral*`,
+    `• Leads: *${totalStats.total}*  ·  📞 *${totalStats.contacted}* (${totalStats.contactRate}%)`,
+    `• 🎯 Qualificados: *${totalStats.qualified}* (${totalStats.qualifiedRate}%)`,
+    `• 🏆 Convertidos: *${totalStats.won}* (${totalStats.conversionRate}%)`,
+    `• ❌ Perdidos: *${totalStats.lost}*${totalStats.lost > 0 ? ` (PJ: ${totalStats.lostPJ} | PF: ${totalStats.lostPF})` : ''}`,
+    `• ⏳ Em aberto: *${totalStats.open}*`,
+    ``,
+    `─────────────────────`,
+    `👥 *Por Consultor*`,
     ``,
   ];
 
-  // Bloco por consultor
-  for (const { name, leads } of byConsultant.values()) {
+  // Bloco por consultor (ordenado por total desc)
+  const sorted = [...byConsultant.values()].sort((a, b) => b.leads.length - a.leads.length);
+  for (const { name, leads } of sorted) {
     const s = calcStats(leads);
-    const lostDetail = s.lost > 0 ? ` (PJ: ${s.lostPJ} | PF: ${s.lostPF})` : '';
-    lines.push(
-      `👤 *${name}*`,
-      `   Recebidos: ${s.total}  ·  ✅ ${s.won}  ·  ❌ ${s.lost}${lostDetail}  ·  ⏳ ${s.open}`,
-      ``,
-    );
+    lines.push(buildConsultantBlockAdmin(name, s), ``);
   }
 
-  // Total geral
-  const t = totalStats;
-  const lostDetail = t.lost > 0 ? ` (PJ: ${t.lostPJ} | PF: ${t.lostPF})` : '';
-  lines.push(
-    `─────────────────────`,
-    `📈 *Total Geral*`,
-    `• Leads: *${t.total}*  ·  ✅ *${t.won}*  ·  ❌ *${t.lost}*${lostDetail}  ·  ⏳ *${t.open}*`,
-  );
-
-  // Seção de leads inativos
+  // Leads inativos
+  lines.push(`─────────────────────`);
   if (inactiveLeads.length > 0) {
-    lines.push(``, `─────────────────────`, `⚠️ *Leads sem atividade (${inactiveLeads.length})*`, ``);
+    lines.push(`⚠️ *Leads sem atividade (${inactiveLeads.length})*`, ``);
     for (const lead of inactiveLeads) {
       const hours = Math.round((Date.now() - new Date(lead.enteredAt)) / 3600000);
       const resp  = lead.assignedTo ? ` · ${lead.assignedTo}` : '';
-      lines.push(`• *${lead.name}*${lead.company ? ` (${lead.company})` : ''}${resp} — ${hours}h sem contato`);
+      lines.push(`• *${lead.name}*${lead.company ? ` (${lead.company})` : ''}${resp} — ${hours}h`);
     }
   } else {
-    lines.push(``, `✅ *Nenhum lead inativo!*`);
+    lines.push(`✅ *Nenhum lead inativo!*`);
   }
 
   return lines.join('\n');
