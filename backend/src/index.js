@@ -10,6 +10,7 @@ const whatsappRouter = require('./whatsapp');
 const { router: kanbanRouter, seedDefaultColumns } = require('./kanban');
 const { router: pushRouter } = require('./push');
 const { startSync } = require('./meetime-sync');
+const { startHealthMonitor, getHealthStatus } = require('./health-monitor');
 
 const app = express();
 const prisma = new PrismaClient();
@@ -28,7 +29,11 @@ app.use('/api', whatsappRouter);
 app.use('/api', kanbanRouter);
 app.use('/api', pushRouter);
 
-app.get('/health', (req, res) => res.json({ ok: true, ts: new Date().toISOString() }));
+// ── Health check detalhado ────────────────────────────────────────────────────
+app.get('/health', (req, res) => {
+  const status = getHealthStatus();
+  res.status(status.ok === false ? 503 : 200).json(status);
+});
 
 app.use((req, res) => res.status(404).json({ error: 'Rota não encontrada' }));
 
@@ -38,17 +43,20 @@ app.use((err, req, res, next) => {
 });
 
 async function start() {
-  // Cria colunas padrão na primeira vez
   await seedDefaultColumns(prisma);
 
   app.listen(PORT, () => {
     console.log(`✅ Meetime backend rodando na porta ${PORT}`);
     console.log(`   Webhook URL: http://localhost:${PORT}/webhook/meetime`);
     console.log(`   Dashboard:   http://localhost:${PORT}/api/dashboard`);
+    console.log(`   Health:      http://localhost:${PORT}/health`);
   });
 
-  // Inicia polling de leads + monitor de inatividade
-  startSync(prisma);
+  // Inicia jobs e pega os restarters
+  const jobRestarters = startSync(prisma);
+
+  // Inicia monitor de saúde com capacidade de reiniciar jobs
+  startHealthMonitor(prisma, jobRestarters);
 }
 
 start().catch(console.error);

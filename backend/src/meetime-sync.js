@@ -21,6 +21,7 @@
 const axios = require('axios');
 const { notifyNewLead, sendWhatsApp, sendGoogleChat } = require('./notifications');
 const { sendPushToLeadOwner, sendPushToAdmins } = require('./push');
+const { reportHeartbeat } = require('./health-monitor');
 
 const MEETIME_API_BASE   = 'https://api.meetime.com.br/v2';
 const POLL_INTERVAL_MS   = 2  * 60 * 1000;       // novos leads: a cada 2 min
@@ -86,6 +87,7 @@ async function pollNewLeads(prisma) {
     });
 
     const leads = Array.isArray(res.data) ? res.data : (res.data.leads || res.data.data || []);
+    reportHeartbeat('pollNewLeads');
     if (leads.length === 0) return;
 
     console.log(`[Sync] ${leads.length} novo(s) lead(s) encontrado(s)`);
@@ -153,6 +155,7 @@ async function pollUpdatedLeads(prisma) {
     });
 
     const leads = Array.isArray(res.data) ? res.data : (res.data.leads || res.data.data || []);
+    reportHeartbeat('pollUpdatedLeads');
     if (leads.length === 0) return;
 
     console.log(`[Sync] 🔄 ${leads.length} lead(s) atualizado(s) no Meetime`);
@@ -163,7 +166,10 @@ async function pollUpdatedLeads(prisma) {
   } catch (err) {
     if (err.message === 'MEETIME_API_TOKEN não configurado no .env') return;
     // lead_updated_after pode não ser suportado — silencia 400/422
-    if (err.response?.status === 400 || err.response?.status === 422) return;
+    if (err.response?.status === 400 || err.response?.status === 422) {
+      reportHeartbeat('pollUpdatedLeads'); // parâmetro não suportado mas job está vivo
+      return;
+    }
     console.error('[Sync] Erro ao buscar leads atualizados:', err.response?.data || err.message);
   }
 }
@@ -263,6 +269,7 @@ async function checkInactiveLeads(prisma) {
       },
     });
 
+    reportHeartbeat('checkInactivity');
     if (staleLeads.length === 0) return;
 
     // Só envia alertas em horário comercial (08h–18h, seg–sex, BRT)
@@ -353,9 +360,32 @@ function startSync(prisma) {
   pollUpdatedLeads(prisma);
   checkInactiveLeads(prisma);
 
-  setInterval(() => pollNewLeads(prisma),      POLL_INTERVAL_MS);
-  setInterval(() => pollUpdatedLeads(prisma),  UPDATE_INTERVAL_MS);
-  setInterval(() => checkInactiveLeads(prisma), INACTIVITY_MS);
+  const intervals = {
+    pollNewLeads:     setInterval(() => pollNewLeads(prisma),      POLL_INTERVAL_MS),
+    pollUpdatedLeads: setInterval(() => pollUpdatedLeads(prisma),  UPDATE_INTERVAL_MS),
+    checkInactivity:  setInterval(() => checkInactiveLeads(prisma), INACTIVITY_MS),
+  };
+
+  // Restarters: reinicia o intervalo do job se o health monitor detectar problema
+  const jobRestarters = {
+    pollNewLeads: () => {
+      clearInterval(intervals.pollNewLeads);
+      pollNewLeads(prisma);
+      intervals.pollNewLeads = setInterval(() => pollNewLeads(prisma), POLL_INTERVAL_MS);
+    },
+    pollUpdatedLeads: () => {
+      clearInterval(intervals.pollUpdatedLeads);
+      pollUpdatedLeads(prisma);
+      intervals.pollUpdatedLeads = setInterval(() => pollUpdatedLeads(prisma), UPDATE_INTERVAL_MS);
+    },
+    checkInactivity: () => {
+      clearInterval(intervals.checkInactivity);
+      checkInactiveLeads(prisma);
+      intervals.checkInactivity = setInterval(() => checkInactiveLeads(prisma), INACTIVITY_MS);
+    },
+  };
+
+  return jobRestarters;
 }
 
 module.exports = { startSync };
