@@ -105,3 +105,14 @@ model WebhookEvent {
   error       String?
   receivedAt  DateTime  @default(now())
 }
+
+model MessageLog {
+  id        String   @id @default(cuid())
+  channel   String   // "whatsapp" | "gchat"
+  to        String   // número ou "Google Chat"
+  toName    String?  // nome resolvido do destinatário
+  body      String
+  status    String   @default("sent") // sent | failed
+  error     String?
+  sentAt    DateTime @default(now())
+}

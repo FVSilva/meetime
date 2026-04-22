@@ -9,6 +9,7 @@ import Users        from './pages/Users';
 import WebhookInfo  from './pages/WebhookInfo';
 import WhatsApp     from './pages/WhatsApp';
 import DailyAnalysis from './pages/DailyAnalysis';
+import Messages      from './pages/Messages';
 
 export default function App() {
   return (
@@ -24,6 +25,7 @@ export default function App() {
           <Route path="/calls"      element={<Calls />}        />
           <Route path="/activities" element={<Activities />}   />
           <Route path="/users"      element={<Users />}        />
+          <Route path="/messages"   element={<Messages />}     />
           <Route path="/whatsapp"   element={<WhatsApp />}     />
           <Route path="/webhook"    element={<WebhookInfo />}  />
         </Routes>

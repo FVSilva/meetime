@@ -285,4 +285,81 @@ router.get('/activities', async (req, res) => {
   res.json({ activities, total });
 });
 
+// ── GET /api/messages ─────────────────────────────────────────────────────────
+// ?channel=whatsapp|gchat  &status=sent|failed  &page=1  &limit=50
+
+router.get('/messages', async (req, res) => {
+  const prisma = db(req);
+  const { channel, status, page = '1', limit = '50', to } = req.query;
+  const skip = (parseInt(page) - 1) * parseInt(limit);
+
+  const where = {};
+  if (channel) where.channel = channel;
+  if (status)  where.status  = status;
+  if (to)      where.to      = { contains: to };
+
+  const [messages, total] = await Promise.all([
+    prisma.messageLog.findMany({
+      where,
+      skip,
+      take:    parseInt(limit),
+      orderBy: { sentAt: 'desc' },
+    }),
+    prisma.messageLog.count({ where }),
+  ]);
+
+  // Resolve nome do destinatário pelo telefone (se não tiver)
+  const phones = [...new Set(messages.filter(m => !m.toName && m.channel === 'whatsapp').map(m => m.to))];
+  let userMap = {};
+  if (phones.length > 0) {
+    const users = await prisma.user.findMany({
+      where: { phone: { in: phones } },
+      select: { phone: true, name: true },
+    });
+    userMap = Object.fromEntries(users.map(u => [u.phone, u.name]));
+  }
+
+  const enriched = messages.map(m => ({
+    ...m,
+    toName: m.toName || userMap[m.to] || m.to,
+  }));
+
+  res.json({ messages: enriched, total, page: parseInt(page), limit: parseInt(limit) });
+});
+
+// ── GET /api/messages/conversations ──────────────────────────────────────────
+// Agrupa por destinatário para o painel lateral estilo WhatsApp
+
+router.get('/messages/conversations', async (req, res) => {
+  const prisma = db(req);
+
+  const all = await prisma.messageLog.findMany({
+    orderBy: { sentAt: 'desc' },
+    take: 1000,
+  });
+
+  // Resolve nomes
+  const phones = [...new Set(all.filter(m => m.channel === 'whatsapp').map(m => m.to))];
+  const users  = phones.length > 0
+    ? await prisma.user.findMany({ where: { phone: { in: phones } }, select: { phone: true, name: true } })
+    : [];
+  const userMap = Object.fromEntries(users.map(u => [u.phone, u.name]));
+
+  // Agrupa por destinatário
+  const convMap = new Map();
+  for (const m of all) {
+    const key  = m.to;
+    const name = m.toName || userMap[m.to] || m.to;
+    if (!convMap.has(key)) {
+      convMap.set(key, { to: key, toName: name, channel: m.channel, lastMessage: m.body, lastAt: m.sentAt, unread: 0, total: 0, failed: 0 });
+    }
+    const conv = convMap.get(key);
+    conv.total++;
+    if (m.status === 'failed') conv.failed++;
+  }
+
+  const conversations = [...convMap.values()].sort((a, b) => new Date(b.lastAt) - new Date(a.lastAt));
+  res.json(conversations);
+});
+
 module.exports = router;

@@ -105,3 +105,14 @@ model WebhookEvent {
   error       String?
   receivedAt  DateTime  @default(now())
 }
+
+model MessageLog {
+  id        String   @id @default(cuid())
+  channel   String
+  to        String
+  toName    String?
+  body      String
+  status    String   @default("sent")
+  error     String?
+  sentAt    DateTime @default(now())
+}

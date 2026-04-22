@@ -1,4 +1,5 @@
 const axios = require('axios');
+const { logMessage } = require('./message-logger');
 
 // ── Evolution API (WhatsApp) ─────────────────────────────────────────────────
 
@@ -28,8 +29,11 @@ async function sendWhatsApp(phone, message) {
       }
     );
     console.log(`[WhatsApp] ✓ Enviado para ${normalized}`);
+    logMessage({ channel: 'whatsapp', to: normalized, body: message, status: 'sent' });
   } catch (err) {
-    console.error(`[WhatsApp] ✗ Erro (${normalized}):`, err.response?.data || err.message);
+    const errMsg = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+    console.error(`[WhatsApp] ✗ Erro (${normalized}):`, errMsg);
+    logMessage({ channel: 'whatsapp', to: normalized, body: message, status: 'failed', error: errMsg });
   }
 }
 
@@ -40,8 +44,11 @@ async function sendGoogleChat(text) {
   if (!url) return;
   try {
     await axios.post(url, { text });
+    logMessage({ channel: 'gchat', to: 'Google Chat', toName: 'Google Chat', body: text, status: 'sent' });
   } catch (err) {
-    console.error('[GoogleChat] Erro:', err.response?.data || err.message);
+    const errMsg = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+    console.error('[GoogleChat] Erro:', errMsg);
+    logMessage({ channel: 'gchat', to: 'Google Chat', toName: 'Google Chat', body: text, status: 'failed', error: errMsg });
   }
 }
 

@@ -1,7 +1,7 @@
 import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard, Users, Phone, CheckSquare,
-  Link2, Settings2, MessageCircle, Kanban, BarChart2,
+  Link2, Settings2, MessageCircle, Kanban, BarChart2, MessagesSquare,
 } from 'lucide-react';
 import PushBell from './PushBell';
 
@@ -12,6 +12,7 @@ const nav = [
   { to: '/leads',      label: 'Leads',      icon: Users           },
   { to: '/calls',      label: 'Ligações',   icon: Phone           },
   { to: '/activities', label: 'Atividades', icon: CheckSquare     },
+  { to: '/messages',   label: 'Mensagens',   icon: MessagesSquare  },
   { divider: true },
   { to: '/whatsapp',   label: 'WhatsApp',   icon: MessageCircle   },
   { to: '/users',      label: 'Usuários',   icon: Settings2       },
