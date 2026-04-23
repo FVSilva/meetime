@@ -86,8 +86,10 @@ router.get('/dashboard', async (req, res) => {
 
 router.get('/leads', async (req, res) => {
   const prisma = db(req);
-  const { status, page = '1', limit = '20', search } = req.query;
-  const skip = (parseInt(page) - 1) * parseInt(limit);
+  const pgNum  = Math.max(1, parseInt(req.query.page)  || 1);
+  const pgSize = Math.min(500, Math.max(1, parseInt(req.query.limit) || 20));
+  const skip   = (pgNum - 1) * pgSize;
+  const { status, search } = req.query;
 
   const where = {};
   if (status) where.status = status;
@@ -103,14 +105,14 @@ router.get('/leads', async (req, res) => {
     prisma.lead.findMany({
       where,
       skip,
-      take: parseInt(limit),
+      take: pgSize,
       orderBy: { enteredAt: 'desc' },
       include: { _count: { select: { activities: true, calls: true } } },
     }),
     prisma.lead.count({ where }),
   ]);
 
-  res.json({ leads, total, page: parseInt(page), limit: parseInt(limit) });
+  res.json({ leads, total, page: pgNum, limit: pgSize });
 });
 
 // ── GET /api/leads/:id ────────────────────────────────────────────────────────
@@ -131,24 +133,24 @@ router.get('/leads/:id', async (req, res) => {
 
 router.get('/calls', async (req, res) => {
   const prisma = db(req);
-  const { page = '1', limit = '20', sentiment } = req.query;
-  const skip = (parseInt(page) - 1) * parseInt(limit);
+  const pgNum  = Math.max(1, parseInt(req.query.page)  || 1);
+  const pgSize = Math.min(200, Math.max(1, parseInt(req.query.limit) || 20));
+  const skip   = (pgNum - 1) * pgSize;
+  const { sentiment } = req.query;
 
   const where = {};
   if (sentiment) where.sentiment = sentiment;
 
   const [calls, total] = await Promise.all([
     prisma.call.findMany({
-      where,
-      skip,
-      take: parseInt(limit),
+      where, skip, take: pgSize,
       orderBy: { calledAt: 'desc' },
       include: { lead: { select: { name: true, company: true } } },
     }),
     prisma.call.count({ where }),
   ]);
 
-  res.json({ calls, total, page: parseInt(page), limit: parseInt(limit) });
+  res.json({ calls, total, page: pgNum, limit: pgSize });
 });
 
 // ── GET /api/calls/:id ────────────────────────────────────────────────────────
@@ -265,17 +267,17 @@ router.patch('/leads/:id/status', async (req, res) => {
 
 router.get('/activities', async (req, res) => {
   const prisma = db(req);
-  const { status, page = '1', limit = '20' } = req.query;
-  const skip = (parseInt(page) - 1) * parseInt(limit);
+  const pgNum  = Math.max(1, parseInt(req.query.page)  || 1);
+  const pgSize = Math.min(200, Math.max(1, parseInt(req.query.limit) || 20));
+  const skip   = (pgNum - 1) * pgSize;
+  const { status } = req.query;
 
   const where = {};
   if (status) where.status = status;
 
   const [activities, total] = await Promise.all([
     prisma.activity.findMany({
-      where,
-      skip,
-      take: parseInt(limit),
+      where, skip, take: pgSize,
       orderBy: { createdAt: 'desc' },
       include: { lead: { select: { name: true, company: true } } },
     }),

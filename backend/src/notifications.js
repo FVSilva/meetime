@@ -114,7 +114,7 @@ function namesMatch(a, b) {
   if (firstA.length >= 5 && firstA === firstB) return true;
 
   // Estratégia 5: Levenshtein ≤ 1 em nomes longos (trata "Britto" vs "Brito", typos)
-  if (na.length >= 6 && Math.abs(na.length - nb.length) <= 2 && levenshtein(na, nb) <= 1) return true;
+  if (na.length >= 6 && na.length <= 60 && Math.abs(na.length - nb.length) <= 2 && levenshtein(na, nb) <= 1) return true;
 
   return false;
 }
@@ -197,10 +197,15 @@ async function notifyNewLead(lead, prisma, cadence = null) {
 
   const tasks = [sendGoogleChat(buildLeadMessage(lead, '', cadence))];
   for (const r of recipients) {
+    if (!r.phone) { console.warn(`[Notif] ⚠️  ${r.name || r.source} sem telefone — pulando`); continue; }
     tasks.push(sendWhatsApp(r.phone, buildLeadMessage(lead, r.name, cadence)));
   }
 
-  await Promise.allSettled(tasks);
+  const results = await Promise.allSettled(tasks);
+  const failed  = results.filter(r => r.status === 'rejected');
+  if (failed.length > 0) {
+    console.error(`[Notif] ✗ ${failed.length} notificação(ões) falharam:`, failed.map(r => r.reason?.message));
+  }
 }
 
 async function notifyNewActivity(activity, lead, prisma) {

@@ -90,15 +90,15 @@ function mapProspStatus(prosp) {
 
 async function pollNewLeads(prisma) {
   try {
-    const since = lastLeadCheck.toISOString();
-    lastLeadCheck = new Date();
-
-    const api  = meetimeApi();
-    const res  = await api.get('/leads', {
+    const since    = lastLeadCheck.toISOString();
+    const api      = meetimeApi();
+    const res      = await api.get('/leads', {
       params: { lead_created_after: since, limit: 100, start: 0 },
     });
 
-    const leads = Array.isArray(res.data) ? res.data : (res.data.leads || res.data.data || []);
+    // Só avança o cursor APÓS a requisição ter sucesso — evita perder leads se falhar
+    lastLeadCheck  = new Date();
+    const leads    = Array.isArray(res.data) ? res.data : (res.data.leads || res.data.data || []);
     reportHeartbeat('pollNewLeads');
     if (leads.length === 0) return;
 

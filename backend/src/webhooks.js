@@ -107,20 +107,20 @@ async function handleLeadCreated(prisma, data) {
   // Meetime pode mandar o owner em diferentes campos dependendo da versão
   const ownerEmail = data.assigned_to?.email || data.owner?.email || null;
 
+  const leadData = {
+    name:       data.name        || 'Sem nome',
+    email:      data.email       || null,
+    phone:      data.phone       || data.mobile || null,
+    company:    data.company     || data.account?.name || null,
+    source:     data.source      || null,
+    assignedTo: data.assigned_to?.name || data.owner?.name || null,
+    ownerEmail,
+  };
+
   const lead = await prisma.lead.upsert({
-    where: { externalId: String(data.id) },
-    update: {},
-    create: {
-      externalId: String(data.id),
-      name:       data.name        || 'Sem nome',
-      email:      data.email       || null,
-      phone:      data.phone       || data.mobile || null,
-      company:    data.company     || data.account?.name || null,
-      source:     data.source      || null,
-      assignedTo: data.assigned_to?.name || data.owner?.name || null,
-      ownerEmail,
-      enteredAt:  data.created_at ? new Date(data.created_at) : new Date(),
-    },
+    where:  { externalId: String(data.id) },
+    update: { ...leadData, updatedAt: new Date() },
+    create: { externalId: String(data.id), ...leadData, enteredAt: data.created_at ? new Date(data.created_at) : new Date() },
   });
 
   console.log(`[Lead] Criado: ${lead.name} | owner: ${ownerEmail || 'sem email'}`);

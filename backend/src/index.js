@@ -13,6 +13,7 @@ const axios = require('axios');
 const { startSync } = require('./meetime-sync');
 const { startHealthMonitor, getHealthStatus } = require('./health-monitor');
 const { scheduleAt19h } = require('./daily-report');
+const { init: initLogger } = require('./message-logger');
 
 const app = express();
 const prisma = new PrismaClient();
@@ -45,6 +46,7 @@ app.use((err, req, res, next) => {
 });
 
 async function start() {
+  initLogger(prisma); // Compartilha instância do prisma com message-logger
   await seedDefaultColumns(prisma);
 
   app.listen(PORT, () => {

@@ -6,17 +6,17 @@
  * Falhas de log são silenciadas — nunca quebram a notificação principal.
  */
 
-const { PrismaClient } = require('@prisma/client');
-
+// Reutiliza a instância do prisma do index.js — evita múltiplas conexões PostgreSQL
 let _prisma = null;
-function db() {
-  if (!_prisma) _prisma = new PrismaClient();
-  return _prisma;
+
+function init(prismaInstance) {
+  _prisma = prismaInstance;
 }
 
 async function logMessage({ channel, to, toName, body, status = 'sent', error = null }) {
+  if (!_prisma) return; // não inicializado ainda — silencia
   try {
-    await db().messageLog.create({
+    await _prisma.messageLog.create({
       data: { channel, to: String(to), toName: toName || null, body, status, error },
     });
   } catch {
@@ -24,4 +24,4 @@ async function logMessage({ channel, to, toName, body, status = 'sent', error = 
   }
 }
 
-module.exports = { logMessage };
+module.exports = { init, logMessage };
