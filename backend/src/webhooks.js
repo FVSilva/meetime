@@ -135,6 +135,8 @@ async function handleLeadCreated(prisma, data) {
   ]);
 }
 
+const TERMINAL_STATUS = ['won', 'lost'];
+
 async function handleLeadUpdated(prisma, data) {
   const existing = await prisma.lead.findUnique({ where: { externalId: String(data.id) } });
   if (!existing) {
@@ -142,27 +144,31 @@ async function handleLeadUpdated(prisma, data) {
     return;
   }
 
-  // Detecta primeiro contato
+  // Proteção: nunca retrocede de won/lost para status anterior
+  // Status só avança via handleLeadStatusChange (lead.won / lead.lost)
+  let newStatus = existing.status;
+  if (data.status && !TERMINAL_STATUS.includes(existing.status)) {
+    newStatus = data.status; // só aceita mudança se ainda não estiver em terminal
+  }
+
   const updates = {
     name:       data.name        || existing.name,
     email:      data.email       || existing.email,
     phone:      data.phone       || data.mobile || existing.phone,
     company:    data.company     || existing.company,
-    status:     data.status      || existing.status,
+    status:     newStatus,
     assignedTo: data.assigned_to?.name || existing.assignedTo,
     ownerEmail: data.assigned_to?.email || data.owner?.email || existing.ownerEmail,
     updatedAt:  new Date(),
   };
 
-  if (data.status === 'contacted' && !existing.firstContactAt) {
-    updates.firstContactAt = new Date();
-    updates.responseTimeSec = Math.round(
-      (new Date() - existing.enteredAt) / 1000
-    );
+  if (newStatus === 'contacted' && !existing.firstContactAt) {
+    updates.firstContactAt  = new Date();
+    updates.responseTimeSec = Math.round((new Date() - existing.enteredAt) / 1000);
   }
 
   await prisma.lead.update({ where: { id: existing.id }, data: updates });
-  console.log(`[Lead] Atualizado: ${existing.name}`);
+  console.log(`[Lead] Atualizado: ${existing.name} [${existing.status} → ${newStatus}]`);
 }
 
 async function handleCallCompleted(prisma, data) {

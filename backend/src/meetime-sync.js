@@ -24,6 +24,7 @@ const { sendPushToLeadOwner, sendPushToAdmins } = require('./push');
 const { reportHeartbeat } = require('./health-monitor');
 
 const MEETIME_API_BASE   = 'https://api.meetime.com.br/v2';
+const TERMINAL_STATUS    = ['won', 'lost']; // status que nunca retrocedem
 const POLL_INTERVAL_MS   = 2  * 60 * 1000;  // novos leads: a cada 2 min
 const UPDATE_INTERVAL_MS = 5  * 60 * 1000;  // atualizações: a cada 5 min
 
@@ -221,15 +222,15 @@ async function syncLeadUpdate(prisma, data) {
   const source     = prosp?.lead_base  || data.source || existing.source;
   const publicUrl  = data.public_url   || existing.publicUrl;
 
-  // Status: won/lost vêm da prospecção, contacted detectado por atividades
+  // Status: won/lost vêm da prospecção — NUNCA retrocede de status terminal
   const mappedStatus = mapProspStatus(prosp);
   let newStatus = existing.status;
 
   if (mappedStatus && existing.status !== mappedStatus) {
-    // Atualização definitiva: won ou lost
+    // Atualização definitiva: won ou lost (sempre tem prioridade)
     newStatus = mappedStatus;
-  } else if (existing.status === 'new') {
-    // Lead ainda como 'new' — verifica se já há atividades no Meetime (= foi contatado)
+  } else if (!TERMINAL_STATUS.includes(existing.status) && existing.status === 'new') {
+    // Só detecta 'contacted' se ainda não estiver em status terminal
     const hasActivity = await fetchHasActivity(externalId, api);
     if (hasActivity) {
       newStatus = 'contacted';
