@@ -9,6 +9,7 @@ const usersRouter = require('./users');
 const whatsappRouter = require('./whatsapp');
 const { router: kanbanRouter, seedDefaultColumns } = require('./kanban');
 const { router: pushRouter } = require('./push');
+const axios = require('axios');
 const { startSync } = require('./meetime-sync');
 const { startHealthMonitor, getHealthStatus } = require('./health-monitor');
 const { scheduleAt19h } = require('./daily-report');
@@ -61,6 +62,17 @@ async function start() {
 
   // Relatório diário às 19h BRT
   scheduleAt19h(prisma);
+
+  // ── Keep-alive: auto-ping a cada 4 min para não dormir no Render free ────────
+  // Render dorme após 15 min sem requisições; combinado com UptimeRobot (5 min)
+  // garante que o servidor fique acordado 24/7
+  const selfUrl = process.env.RENDER_EXTERNAL_URL;
+  if (selfUrl) {
+    setInterval(() => {
+      axios.get(`${selfUrl}/health`).catch(() => {});
+    }, 4 * 60 * 1000);
+    console.log(`[KeepAlive] Auto-ping ativo → ${selfUrl}/health (a cada 4 min)`);
+  }
 }
 
 start().catch(console.error);

@@ -245,6 +245,30 @@ async function sendDailyReport(prisma) {
 }
 
 // ── Agendamento às 19h BRT (= 22h UTC no Render) ───────────────────────────
+
+// Chave no DB para controlar se o relatório do dia já foi enviado
+const REPORT_KEY = 'daily_report_sent';
+
+async function wasReportSentToday(prisma) {
+  try {
+    const todayUTC22 = new Date();
+    todayUTC22.setUTCHours(22, 0, 0, 0);
+    // Se ainda não chegou às 22h UTC hoje, usa referência de ontem
+    if (todayUTC22 > new Date()) todayUTC22.setDate(todayUTC22.getDate() - 1);
+
+    const sent = await prisma.messageLog.findFirst({
+      where: {
+        channel: 'gchat',
+        body:    { contains: 'Análise Diária' },
+        sentAt:  { gte: todayUTC22 },
+      },
+    });
+    return !!sent;
+  } catch {
+    return false;
+  }
+}
+
 function scheduleAt19h(prisma) {
   function msUntilNext19hBRT() {
     const now  = new Date();
@@ -254,7 +278,18 @@ function scheduleAt19h(prisma) {
     return next - now;
   }
 
-  function schedule() {
+  async function schedule() {
+    // Verifica se o servidor reiniciou depois das 19h BRT e o relatório não foi enviado
+    const nowUTCHour = new Date().getUTCHours();
+    const brtHour    = (nowUTCHour - 3 + 24) % 24;
+    if (brtHour >= 19) {
+      const alreadySent = await wasReportSentToday(prisma);
+      if (!alreadySent) {
+        console.log('[Relatório] ⚠️  Servidor reiniciou após 19h — enviando relatório agora...');
+        await sendDailyReport(prisma).catch(console.error);
+      }
+    }
+
     const delay = msUntilNext19hBRT();
     const hh    = (delay / 3600000).toFixed(1);
     console.log(`[Relatório] ⏰ Próximo relatório em ${hh}h (às 19:00 BRT / 22:00 UTC)`);
