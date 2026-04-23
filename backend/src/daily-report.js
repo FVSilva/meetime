@@ -94,6 +94,38 @@ async function collectLeadsOfDay(prisma) {
   });
 }
 
+// ── Busca stats de atividade do dia (ligações, emails, mensagens) ──────────
+async function collectActivityStats(prisma) {
+  const { from, to } = todayWindow();
+
+  const [calls, activities, messages] = await Promise.all([
+    // Ligações feitas hoje
+    prisma.call.count({ where: { calledAt: { gte: from, lte: to } } }),
+
+    // Atividades concluídas hoje (emails, tarefas, etc.)
+    prisma.activity.findMany({
+      where: { completedAt: { gte: from, lte: to } },
+      select: { type: true },
+    }),
+
+    // Mensagens disparadas pelo sistema hoje (WhatsApp + GChat)
+    prisma.messageLog.groupBy({
+      by: ['channel', 'status'],
+      where: { sentAt: { gte: from, lte: to } },
+      _count: true,
+    }),
+  ]);
+
+  const emailCount    = activities.filter(a => (a.type || '').toLowerCase().includes('email')).length;
+  const activityCount = activities.length;
+
+  const whatsApp = messages.filter(m => m.channel === 'whatsapp' && m.status === 'sent').reduce((s, m) => s + m._count, 0);
+  const gchat    = messages.filter(m => m.channel === 'gchat'    && m.status === 'sent').reduce((s, m) => s + m._count, 0);
+  const failed   = messages.filter(m => m.status === 'failed').reduce((s, m) => s + m._count, 0);
+
+  return { calls, emailCount, activityCount, whatsApp, gchat, failed };
+}
+
 // ── Busca leads inativos (qualquer data, sem atividades, em aberto) ─────────
 async function collectInactiveLeads(prisma) {
   return prisma.lead.findMany({
@@ -163,7 +195,7 @@ function buildConsultantBlockAdmin(name, stats) {
 }
 
 // ── Relatório completo (admins + GChat) ────────────────────────────────────
-function buildFullReport(byConsultant, totalStats, inactiveLeads) {
+function buildFullReport(byConsultant, totalStats, inactiveLeads, actStats) {
   const date  = new Date().toLocaleDateString('pt-BR');
   const lines = [
     `📊 *Análise Diária — ${date}*`,
@@ -187,6 +219,15 @@ function buildFullReport(byConsultant, totalStats, inactiveLeads) {
     lines.push(buildConsultantBlockAdmin(name, s), ``);
   }
 
+  // Atividade do dia
+  lines.push(
+    `─────────────────────`,
+    `📡 *Atividade do dia*`,
+    `• 📞 Ligações: *${actStats.calls}*`,
+    `• 📧 E-mails/Atividades: *${actStats.activityCount}*`,
+    `• 💬 WhatsApp enviados: *${actStats.whatsApp}*${actStats.failed > 0 ? `  ⚠️ ${actStats.failed} falha(s)` : ''}`,
+  );
+
   // Leads inativos
   lines.push(`─────────────────────`);
   if (inactiveLeads.length > 0) {
@@ -208,8 +249,11 @@ async function sendDailyReport(prisma) {
   console.log('[Relatório] ▶  Gerando relatório diário das 19h...');
 
   try {
-    const leads         = await collectLeadsOfDay(prisma);
-    const inactiveLeads = await collectInactiveLeads(prisma);
+    const [leads, inactiveLeads, actStats] = await Promise.all([
+      collectLeadsOfDay(prisma),
+      collectInactiveLeads(prisma),
+      collectActivityStats(prisma),
+    ]);
 
     // Agrupa por consultor
     const byConsultant = new Map();
@@ -222,7 +266,7 @@ async function sendDailyReport(prisma) {
     }
 
     const totalStats = calcStats(leads);
-    const fullReport = buildFullReport(byConsultant, totalStats, inactiveLeads);
+    const fullReport = buildFullReport(byConsultant, totalStats, inactiveLeads, actStats);
 
     // Admins recebem relatório completo (WhatsApp + GChat)
     const admins = await prisma.user.findMany({ where: { role: 'admin', active: true } });
