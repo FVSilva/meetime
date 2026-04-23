@@ -161,8 +161,9 @@ async function pollUpdatedLeads(prisma) {
     const since = lastUpdateSync.toISOString();
     lastUpdateSync = new Date();
 
-    const api = meetimeApi();
-    let leads = [];
+    const api   = meetimeApi();
+    let leads   = [];
+    let source  = 'filtro por data';
 
     try {
       // Tenta com lead_updated_after (ideal)
@@ -170,22 +171,21 @@ async function pollUpdatedLeads(prisma) {
         params: { lead_updated_after: since, limit: 100, start: 0 },
       });
       leads = Array.isArray(res.data) ? res.data : (res.data.leads || res.data.data || []);
-      console.log(`[Sync] 🔄 ${leads.length} lead(s) atualizado(s) (filtro por data)`);
     } catch (e) {
-      if (e.response?.status === 400 || e.response?.status === 422) {
-        // lead_updated_after não suportado pela API — fallback: busca os 50 mais recentes
-        console.log('[Sync] 🔄 Parâmetro lead_updated_after não suportado, usando fallback (50 leads recentes)');
+      // Qualquer erro (400, 422, 500, timeout, etc.) → fallback aos 50 mais recentes
+      source = `fallback (${e.response?.status || e.message})`;
+      try {
         const res2 = await api.get('/leads', { params: { limit: 50, start: 0 } });
         leads = Array.isArray(res2.data) ? res2.data : (res2.data.leads || res2.data.data || []);
-        console.log(`[Sync] 🔄 ${leads.length} lead(s) para verificar via fallback`);
-      } else {
-        throw e;
+      } catch (e2) {
+        console.error('[Sync] Fallback também falhou:', e2.response?.data || e2.message);
       }
     }
 
     reportHeartbeat('pollUpdatedLeads');
     if (leads.length === 0) return;
 
+    console.log(`[Sync] 🔄 ${leads.length} lead(s) para sync (${source})`);
     for (const item of leads) {
       await syncLeadUpdate(prisma, item);
     }
