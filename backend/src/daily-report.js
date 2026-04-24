@@ -119,19 +119,21 @@ async function collectActivityStats(prisma) {
   const emailCount    = activities.filter(a => (a.type || '').toLowerCase().includes('email')).length;
   const activityCount = activities.length;
 
-  const whatsApp = messages.filter(m => m.channel === 'whatsapp' && m.status === 'sent').reduce((s, m) => s + m._count, 0);
-  const gchat    = messages.filter(m => m.channel === 'gchat'    && m.status === 'sent').reduce((s, m) => s + m._count, 0);
-  const failed   = messages.filter(m => m.status === 'failed').reduce((s, m) => s + m._count, 0);
+  const whatsApp = messages.filter(m => m.channel === 'whatsapp' && m.status === 'sent').reduce((s, m) => s + (m._count._all ?? m._count ?? 0), 0);
+  const gchat    = messages.filter(m => m.channel === 'gchat'    && m.status === 'sent').reduce((s, m) => s + (m._count._all ?? m._count ?? 0), 0);
+  const failed   = messages.filter(m => m.status === 'failed').reduce((s, m) => s + (m._count._all ?? m._count ?? 0), 0);
 
   return { calls, emailCount, activityCount, whatsApp, gchat, failed };
 }
 
-// ── Busca leads inativos (qualquer data, sem atividades, em aberto) ─────────
+// ── Busca leads inativos — apenas dos últimos 30 dias, sem atividades ──────
 async function collectInactiveLeads(prisma) {
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
   return prisma.lead.findMany({
     where: {
       status:     { notIn: ['won', 'lost'] },
       activities: { none: {} },
+      enteredAt:  { gte: thirtyDaysAgo }, // ignora leads antigos
       NOT: { name: { in: ['Sem nome', 'Lead desconhecido', 'Lead'] } },
       OR: [{ email: { not: null } }, { phone: { not: null } }],
     },
@@ -139,8 +141,8 @@ async function collectInactiveLeads(prisma) {
       id: true, name: true, company: true, status: true,
       assignedTo: true, enteredAt: true,
     },
-    orderBy: { enteredAt: 'asc' },
-    take: 30, // limita para não poluir a mensagem
+    orderBy: { enteredAt: 'desc' }, // mais recentes primeiro
+    take: 20,
   });
 }
 
@@ -255,9 +257,11 @@ async function sendDailyReport(prisma) {
       collectActivityStats(prisma),
     ]);
 
-    // Agrupa por consultor
+    // Agrupa por consultor — ignora assignedTo que seja email (ex: adriano@v4company.com)
+    const isEmail = v => typeof v === 'string' && v.includes('@');
     const byConsultant = new Map();
     for (const lead of leads) {
+      if (isEmail(lead.assignedTo)) continue; // ignora leads com email no lugar de nome
       const key = lead.assignedTo || '(sem responsável)';
       if (!byConsultant.has(key)) {
         byConsultant.set(key, { name: key, email: lead.ownerEmail || null, leads: [] });
