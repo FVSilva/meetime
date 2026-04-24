@@ -113,7 +113,7 @@ async function pollNewLeads(prisma) {
   }
 }
 
-async function processApiLead(prisma, data) {
+async function processApiLead(prisma, data, { notify = true } = {}) {
   const externalId = String(data.id);
   const existing   = await prisma.lead.findUnique({ where: { externalId } });
   if (existing) return; // já existe, o job de update cuida
@@ -144,15 +144,17 @@ async function processApiLead(prisma, data) {
 
   console.log(`[Sync] ✅ Lead salvo: ${lead.name} | responsável: ${assignedTo || 'sem responsável'}`);
 
-  await Promise.allSettled([
-    notifyNewLead(lead, prisma, cadence),
-    sendPushToLeadOwner(prisma, {
-      title: '🔔 Novo Lead!',
-      body:  `${lead.name}${lead.company ? ' · ' + lead.company : ''}`,
-      url:   '/leads',
-      tag:   `lead-${lead.id}`,
-    }, ownerEmail),
-  ]);
+  if (notify) {
+    await Promise.allSettled([
+      notifyNewLead(lead, prisma, cadence),
+      sendPushToLeadOwner(prisma, {
+        title: '🔔 Novo Lead!',
+        body:  `${lead.name}${lead.company ? ' · ' + lead.company : ''}`,
+        url:   '/leads',
+        tag:   `lead-${lead.id}`,
+      }, ownerEmail),
+    ]);
+  }
 }
 
 // ── Job 2: Polling de leads atualizados ──────────────────────────────────────
@@ -201,8 +203,9 @@ async function syncLeadUpdate(prisma, data) {
   const existing   = await prisma.lead.findUnique({ where: { externalId } });
 
   if (!existing) {
-    // Lead novo que não pegamos antes — processa normalmente
-    await processApiLead(prisma, data);
+    // Lead não está no banco — salva silenciosamente SEM notificar
+    // (pode ser lead antigo encontrado pelo fallback do pollUpdatedLeads)
+    await processApiLead(prisma, data, { notify: false });
     return;
   }
 
