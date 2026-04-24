@@ -172,18 +172,11 @@ async function handleLeadUpdated(prisma, data) {
 }
 
 async function handleCallCompleted(prisma, data) {
-  // Garante que o lead existe
-  let lead = await prisma.lead.findUnique({ where: { externalId: String(data.lead_id || data.contact_id) } });
+  const lead = await prisma.lead.findUnique({ where: { externalId: String(data.lead_id || data.contact_id) } });
 
   if (!lead) {
-    console.warn(`[Call] Lead ${data.lead_id} não encontrado no banco, criando rascunho.`);
-    lead = await prisma.lead.create({
-      data: {
-        externalId: String(data.lead_id || data.contact_id || `call-${data.id}`),
-        name: data.contact_name || 'Lead desconhecido',
-        enteredAt: new Date(),
-      },
-    });
+    console.warn(`[Call] Lead ${data.lead_id} não encontrado no banco — evento ignorado.`);
+    return;
   }
 
   // Cria o registro da ligação
@@ -241,16 +234,11 @@ async function handleCallCompleted(prisma, data) {
 async function handleActivityCreated(prisma, data) {
   const leadId = data.lead_id || data.contact_id;
 
-  let lead = await prisma.lead.findUnique({ where: { externalId: String(leadId) } });
+  const lead = await prisma.lead.findUnique({ where: { externalId: String(leadId) } });
 
   if (!lead) {
-    lead = await prisma.lead.create({
-      data: {
-        externalId: String(leadId || `act-${data.id}`),
-        name: data.contact_name || 'Lead desconhecido',
-        enteredAt: new Date(),
-      },
-    });
+    console.warn(`[Activity] Lead ${leadId} não encontrado no banco — evento ignorado.`);
+    return;
   }
 
   const activity = await prisma.activity.upsert({
@@ -274,19 +262,17 @@ async function handleActivityCreated(prisma, data) {
 
 async function handleLeadStatusChange(prisma, data, newStatus, label) {
   const externalId = String(data.id || data.lead_id);
-  let lead = await prisma.lead.findUnique({ where: { externalId } });
+  const lead = await prisma.lead.findUnique({ where: { externalId } });
 
   if (!lead) {
-    // Cria rascunho caso não exista ainda
-    lead = await prisma.lead.create({
-      data: {
-        externalId,
-        name:      data.name || data.contact_name || 'Lead',
-        ownerEmail: data.assigned_to?.email || null,
-        assignedTo: data.assigned_to?.name  || null,
-        enteredAt:  new Date(),
-      },
-    });
+    console.warn(`[Webhook] ${label}: lead ${externalId} não encontrado — evento ignorado.`);
+    return;
+  }
+
+  // Nunca retrocede de status terminal
+  if (['won', 'lost'].includes(lead.status) && lead.status !== newStatus) {
+    console.warn(`[Webhook] ${label}: lead ${lead.name} já está em "${lead.status}" — sem regressão.`);
+    return;
   }
 
   await prisma.lead.update({
@@ -299,18 +285,13 @@ async function handleLeadStatusChange(prisma, data, newStatus, label) {
 
 async function handleCallStarted(prisma, data) {
   const leadExternalId = String(data.lead_id || data.contact_id || '');
-  let lead = leadExternalId
+  const lead = leadExternalId
     ? await prisma.lead.findUnique({ where: { externalId: leadExternalId } })
     : null;
 
   if (!lead) {
-    lead = await prisma.lead.create({
-      data: {
-        externalId: leadExternalId || `call-start-${data.id}`,
-        name:       data.contact_name || 'Lead desconhecido',
-        enteredAt:  new Date(),
-      },
-    });
+    console.warn(`[Call] Lead ${leadExternalId} não encontrado — call.started ignorado.`);
+    return;
   }
 
   await prisma.call.upsert({
@@ -359,18 +340,13 @@ async function handleCallUpdatedEvent(prisma, data) {
 async function handleFlowActivity(prisma, data, outcome) {
   // outcome: 'done' | 'ignored'
   const leadId = data.lead_id || data.contact_id;
-  let lead = leadId
+  const lead = leadId
     ? await prisma.lead.findUnique({ where: { externalId: String(leadId) } })
     : null;
 
   if (!lead) {
-    lead = await prisma.lead.create({
-      data: {
-        externalId: String(leadId || `flow-${data.id}`),
-        name:       data.contact_name || 'Lead desconhecido',
-        enteredAt:  new Date(),
-      },
-    });
+    console.warn(`[Flow] Lead ${leadId} não encontrado — activity.flow.${outcome} ignorado.`);
+    return;
   }
 
   const activity = await prisma.activity.upsert({

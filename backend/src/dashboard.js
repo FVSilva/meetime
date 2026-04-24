@@ -219,9 +219,12 @@ router.get('/analytics', async (req, res) => {
     ];
   }
 
+  // Filtra leads cujo responsável é um email (ex: adriano@v4company.com)
+  const realLeads = leads.filter(l => !l.assignedTo || !l.assignedTo.includes('@'));
+
   // Agrupa por consultor
   const map = new Map();
-  for (const lead of leads) {
+  for (const lead of realLeads) {
     const key = lead.assignedTo || '(sem responsável)';
     if (!map.has(key)) map.set(key, []);
     map.get(key).push(lead);
@@ -233,7 +236,7 @@ router.get('/analytics', async (req, res) => {
 
   res.json({
     period: { from: fromStr, to: toStr },
-    summary: calcStats(leads),
+    summary: calcStats(realLeads),
     consultants,
   });
 });

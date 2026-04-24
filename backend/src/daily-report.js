@@ -77,11 +77,11 @@ function todayWindow() {
   return { from, to };
 }
 
-// ── Busca leads do dia ──────────────────────────────────────────────────────
+// ── Busca leads do dia — exclui leads com email no assignedTo (ex: Adriano) ─
 async function collectLeadsOfDay(prisma) {
   const { from, to } = todayWindow();
 
-  return prisma.lead.findMany({
+  const leads = await prisma.lead.findMany({
     where: {
       enteredAt: { gte: from, lte: to },
       NOT: { name: { in: ['Sem nome', 'Lead desconhecido', 'Lead'] } },
@@ -92,6 +92,9 @@ async function collectLeadsOfDay(prisma) {
       assignedTo: true, ownerEmail: true, enteredAt: true,
     },
   });
+
+  // Filtra leads cujo responsável é um email (não é consultor real)
+  return leads.filter(l => !l.assignedTo || !l.assignedTo.includes('@'));
 }
 
 // ── Busca stats de atividade do dia (ligações, emails, mensagens) ──────────
