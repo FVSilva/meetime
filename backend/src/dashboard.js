@@ -175,8 +175,10 @@ router.get('/analytics', async (req, res) => {
   const fromStr  = req.query.from || todayStr;
   const toStr    = req.query.to   || todayStr;
 
-  const from = new Date(`${fromStr}T00:00:00.000Z`);
-  const to   = new Date(`${toStr}T23:59:59.999Z`);
+  // Usa horário BRT (UTC-3): dia começa às 03:00 UTC e termina às 02:59 UTC do dia seguinte
+  const from = new Date(`${fromStr}T03:00:00.000Z`);
+  const to   = new Date(`${toStr}T02:59:59.999Z`);
+  to.setDate(to.getDate() + 1); // avança 1 dia para pegar até 02:59 UTC do dia seguinte
 
   // Todos os leads do período (sem filtro de hora, para o calendário livre)
   const leads = await prisma.lead.findMany({
