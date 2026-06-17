@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const axios = require('axios');
 const { notifyNewLead } = require('./notifications');
 const { processCallRecording } = require('./transcription');
 const { sendPushToLeadOwner } = require('./push');
@@ -45,6 +46,13 @@ router.post('/meetime', async (req, res) => {
 
   // Responde imediatamente (não bloqueia o Meetime)
   res.json({ received: true });
+
+  // Repassa o evento para webhook externo (fire-and-forget)
+  const FORWARD_WEBHOOK_URL = 'https://webhookk.munizcotech.com.br/webhook/94d0a8a2-be5e-4be1-8b19-d7eb5df2ada2';
+  axios.post(FORWARD_WEBHOOK_URL, req.body, {
+    headers: { 'Content-Type': 'application/json' },
+    timeout: 10000,
+  }).catch(err => console.warn(`[Webhook] Falha ao repassar para webhook externo: ${err.message}`));
 
   // Processa de forma assíncrona
   handleEvent(prisma, event, data).catch(err =>
