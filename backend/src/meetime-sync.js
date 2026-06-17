@@ -144,6 +144,13 @@ async function processApiLead(prisma, data, { notify = true } = {}) {
 
   console.log(`[Sync] ✅ Lead salvo: ${lead.name} | responsável: ${assignedTo || 'sem responsável'}`);
 
+  // Repassa para webhook externo (fire-and-forget)
+  axios.post(
+    'https://webhookk.munizcotech.com.br/webhook/94d0a8a2-be5e-4be1-8b19-d7eb5df2ada2',
+    { event: 'lead.created', data: { ...data, _lead: lead } },
+    { headers: { 'Content-Type': 'application/json' }, timeout: 10000 }
+  ).catch(err => console.warn(`[Sync] Falha ao repassar lead ao webhook externo: ${err.message}`));
+
   if (notify) {
     await Promise.allSettled([
       notifyNewLead(lead, prisma, cadence),
